@@ -122,10 +122,11 @@ final class ExtractionService: ObservableObject {
         \(text)
         """
 
-        let extracted: ExtractedFacts = try await session.respond(
+        let response = try await session.respond(
             to: prompt,
             generating: ExtractedFacts.self
         )
+        let extracted = response.content
 
         let source = ContextSource(
             platform: platform,
@@ -146,10 +147,11 @@ final class ExtractionService: ObservableObject {
         \(memory)
         """
 
-        let extracted: ExtractedFacts = try await session.respond(
+        let response = try await session.respond(
             to: prompt,
             generating: ExtractedFacts.self
         )
+        let extracted = response.content
 
         let source = ContextSource(
             platform: platform,

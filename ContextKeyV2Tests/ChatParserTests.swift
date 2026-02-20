@@ -183,15 +183,27 @@ final class ChatParserTests: XCTestCase {
     // MARK: - Real Claude Export Integration Test
 
     func testParseRealClaudeExport() throws {
-        // Load real export if available in TestFixtures
-        let fixturesURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("TestFixtures")
-            .appendingPathComponent("claude_export")
-            .appendingPathComponent("conversations.json")
+        // Try multiple paths to find TestFixtures
+        let candidatePaths = [
+            // Source tree path (when running from Xcode with source tree access)
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("TestFixtures")
+                .appendingPathComponent("claude_export")
+                .appendingPathComponent("conversations.json"),
+            // Project root path
+            URL(fileURLWithPath: ProcessInfo.processInfo.environment["PROJECT_DIR"] ?? "")
+                .appendingPathComponent("TestFixtures")
+                .appendingPathComponent("claude_export")
+                .appendingPathComponent("conversations.json"),
+            // Hardcoded project path as last resort
+            URL(fileURLWithPath: "/Users/srinathprasannancs/ContextKeyV2/TestFixtures/claude_export/conversations.json")
+        ]
 
-        guard FileManager.default.fileExists(atPath: fixturesURL.path) else {
+        guard let fixturesURL = candidatePaths.first(where: {
+            FileManager.default.fileExists(atPath: $0.path)
+        }) else {
             // Skip if no real export available
             return
         }

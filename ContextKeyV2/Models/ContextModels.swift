@@ -222,7 +222,11 @@ struct ClaudeMessage: Codable {
 struct ClaudeContent: Codable {
     let type: String?
     let text: String?
-    let citations: [String]?
+
+    // Citations can be null, an array of strings, or an array of objects — ignore for our purposes
+    enum CodingKeys: String, CodingKey {
+        case type, text
+    }
 }
 
 struct ClaudeAttachment: Codable {
