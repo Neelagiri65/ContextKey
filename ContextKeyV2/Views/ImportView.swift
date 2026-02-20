@@ -107,7 +107,7 @@ struct ImportView: View {
             }
             .fileImporter(
                 isPresented: $showFilePicker,
-                allowedContentTypes: [.json, .zip, .folder],
+                allowedContentTypes: [.json, .zip],
                 allowsMultipleSelection: false
             ) { result in
                 handleFileSelection(result)
@@ -133,30 +133,42 @@ struct ImportView: View {
 
         Task {
             do {
-                let accessing = url.startAccessingSecurityScopedResource()
+                // Attempt security scoped access — retry once on failure
+                var accessing = url.startAccessingSecurityScopedResource()
+                if !accessing {
+                    try await Task.sleep(for: .milliseconds(500))
+                    accessing = url.startAccessingSecurityScopedResource()
+                }
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
-                // Check if it's a directory (Claude exports as a folder)
-                var isDir: ObjCBool = false
-                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+                guard accessing else {
+                    throw ImportError.fileAccessDenied
+                }
 
                 var parseResult: ParseResult
                 var claudeMemory: String?
 
+                // Check if it's a directory (unzipped archive) or file
+                var isDir: ObjCBool = false
+                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+
                 if isDir.boolValue {
                     // Directory — look for conversations.json inside
-                    let convURL = url.appendingPathComponent("conversations.json")
-                    parseResult = try ChatParser.parse(fileURL: convURL, platform: platform)
+                    if let convURL = findFile(named: "conversations.json", in: url) {
+                        parseResult = try ChatParser.parse(fileURL: convURL, platform: platform)
+                    } else {
+                        throw ImportError.conversationsNotFound
+                    }
 
                     // Also try to parse memories.json if Claude
                     if platform == .claude {
-                        let memURL = url.appendingPathComponent("memories.json")
-                        if let memData = try? Data(contentsOf: memURL) {
+                        if let memURL = findFile(named: "memories.json", in: url),
+                           let memData = try? Data(contentsOf: memURL) {
                             claudeMemory = try? ChatParser.parseClaudeMemories(data: memData)
                         }
                     }
                 } else {
-                    // Single file
+                    // Single JSON file
                     parseResult = try ChatParser.parse(fileURL: url, platform: platform)
                 }
 
@@ -169,6 +181,31 @@ struct ImportView: View {
                     errorMessage = error.localizedDescription
                     isProcessingFile = false
                 }
+            }
+        }
+    }
+
+    /// Recursively find a file by name in a directory
+    private func findFile(named fileName: String, in directory: URL) -> URL? {
+        let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil)
+        while let fileURL = enumerator?.nextObject() as? URL {
+            if fileURL.lastPathComponent == fileName {
+                return fileURL
+            }
+        }
+        return nil
+    }
+
+    enum ImportError: Error, LocalizedError {
+        case fileAccessDenied
+        case conversationsNotFound
+
+        var errorDescription: String? {
+            switch self {
+            case .fileAccessDenied:
+                return "Could not access the file. Please try selecting it again."
+            case .conversationsNotFound:
+                return "No conversations.json found in the archive. Make sure you're using the correct export file."
             }
         }
     }

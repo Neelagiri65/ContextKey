@@ -45,6 +45,8 @@ enum ChatParser {
             return try parsePerplexity(data: data)
         case .gemini:
             return try parseGemini(data: data)
+        case .manual:
+            throw ParseError.unsupportedFormat
         }
     }
 

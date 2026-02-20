@@ -110,51 +110,85 @@ top of mind, brief history. This is PRE-EXTRACTED context we can use directly.
 
 ---
 
-### Perplexity (approximate — needs test export to confirm)
+### Perplexity (UPDATED — Feb 2026 research)
 
-```json
-[
-  {
-    "query_str": "Search query",
-    "answer_text": "AI response...",
-    "sources": [
-      { "url": "https://...", "title": "...", "snippet": "..." }
-    ],
-    "created_at": "2024-06-15T10:00:00Z",
-    "search_focus": "internet|academic|writing|youtube|reddit"
-  }
-]
-```
+**Export method:** Per-thread export only (PDF, Markdown, or DOCX). No bulk JSON self-serve export.
 
----
+**Key findings:**
+- Thread-level export via UI button: PDF, Markdown, or DOCX
+- NO account-wide bulk JSON export available self-serve
+- GDPR/Right to Access requires support/privacy channel request
+- Delivered package format for bulk export NOT publicly documented
 
-### Gemini (Google Takeout)
+**Parser strategy:**
+1. **Primary:** Parse per-thread Markdown export
+2. **Secondary:** PDF/DOCX as lower-fidelity fallback
+3. **Future:** Implement guarded JSON adapter that auto-detects unknown structures
 
-**Export method:** takeout.google.com > Gemini Apps
-
-**Structure:** Individual JSON files per conversation in a folder.
-
-```
-Takeout/Gemini Apps/My Gemini Apps Data/conversations/
-  2024-01-15T10_30_00-conversation.json
-  ...
-```
-
+**Provisional normalized record:**
 ```json
 {
-  "conversation_id": "abc123",
-  "create_time": "2024-01-15T10:30:00.000Z",
-  "entries": [
-    {
-      "query": { "text": "User question", "attachments": [] },
-      "response": { "text": "Gemini response", "attachments": [] },
-      "drafts": [{ "text": "Alternative draft" }]
-    }
-  ]
+  "platform": "perplexity",
+  "thread_id": "string",
+  "thread_title": "string",
+  "message_id": "string",
+  "role": "user|assistant|system",
+  "content": "string",
+  "created_at": "ISO-8601|string|nullable",
+  "sources": [{"title": "string", "url": "string"}],
+  "attachments": [{"name": "string", "type": "string", "path": "string"}]
 }
 ```
 
-**Note:** Gemini generates multiple drafts per response — included in export.
+**Sources:**
+- https://www.perplexity.ai/help-center/en/articles/10354769-what-is-a-thread
+- https://www.perplexity.ai/help-center/en/articles/11564568-gdpr-compliance-at-perplexity
+
+---
+
+### Gemini (UPDATED — Feb 2026 research via Google Takeout)
+
+**Export method:** Google Takeout (Gemini Privacy Hub → Export)
+
+**Archive structure:** Zip/tgz archive under `Takeout/` directory with `archive_browser.html`
+
+**Key finding:** Gemini conversations are exported as **My Activity records**, not custom conversation JSON.
+
+**Discovery rules for parser:**
+1. Walk zip recursively under `Takeout/`
+2. Match files named `MyActivity.json` (and `.html` for fallback)
+3. Prioritize paths containing `Gemini` or `Gemini Apps`
+4. Parse records as array of My Activity objects
+
+**My Activity JSON schema (Google Data Portability docs):**
+```json
+{
+  "header": "string",
+  "title": "string",
+  "titleUrl": "string",
+  "description": "string",
+  "time": "ISO-8601 timestamp",
+  "products": ["string"],
+  "activityControls": ["string"],
+  "subtitles": [{"name": "string", "url": "string"}],
+  "details": [{"name": "string", "value": "string"}],
+  "attachments": [{"mimeType": "string", "name": "string", "url": "string"}]
+}
+```
+
+**Message-bearing fields:**
+- Timestamp: `time`
+- Primary text: `title`, `description`, `details[]`
+- Links: `titleUrl`, `subtitles[].url`
+- Attachments/media: `attachments[]`
+- Product tags: `products[]`, `activityControls[]`
+
+**Confidence:** High on transport/format, Medium on exact file path naming in zip.
+
+**Sources:**
+- https://support.google.com/gemini/answer/13594961
+- https://support.google.com/accounts/answer/3024190
+- https://developers.google.com/data-portability/schema-reference/myactivity
 
 ---
 
@@ -251,9 +285,10 @@ Takeout/Gemini Apps/My Gemini Apps Data/conversations/
 
 | Finding | Confidence | Action |
 |---------|-----------|--------|
-| ChatGPT export format | High | Build parser |
-| Claude export format | Medium | Do a test export to verify field names |
-| Perplexity export format | Low | Must do test export |
-| Gemini export format | Medium | Must do test export |
+| ChatGPT export format | High | Parser built, awaiting real export |
+| Claude export format | **VERIFIED** | Parser built & tested against real 5.5MB export |
+| Perplexity export format | Medium | Thread-level Markdown export only, no bulk JSON |
+| Gemini export format | Medium-High | Google Takeout My Activity JSON, schema documented |
 | Apple Foundation Models API | Medium-High | Verify against latest iOS 26 beta SDK |
 | Open-source SLM options | High | Well-documented models |
+| Privacy Policy | **DONE** | Saved as PRIVACY_POLICY.md |

@@ -59,6 +59,13 @@ final class BiometricService: ObservableObject {
         }
     }
 
+    /// Unlock without triggering biometric auth (e.g., after onboarding)
+    func unlockWithoutAuth() {
+        isAuthenticated = true
+        isLocked = false
+        errorMessage = nil
+    }
+
     /// Lock the app (e.g., when going to background)
     func lock() {
         isAuthenticated = false

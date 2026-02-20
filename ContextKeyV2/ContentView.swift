@@ -1,16 +1,20 @@
 import SwiftUI
 
-// MARK: - Content View (Router + FaceID Gate)
+// MARK: - Content View (Router)
 
 struct ContentView: View {
     @EnvironmentObject var biometricService: BiometricService
     @EnvironmentObject var storageService: StorageService
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some View {
         Group {
-            if !storageService.hasStoredProfile {
-                // First-time user: go straight to input, no lock gate needed
-                InputView()
+            if !hasCompletedOnboarding {
+                OnboardingView {
+                    // After onboarding, unlock immediately — no double FaceID
+                    biometricService.unlockWithoutAuth()
+                    hasCompletedOnboarding = true
+                }
             } else if biometricService.isLocked {
                 LockScreen()
             } else {
@@ -18,7 +22,7 @@ struct ContentView: View {
             }
         }
         .animation(.smooth, value: biometricService.isLocked)
-        .animation(.smooth, value: storageService.hasStoredProfile)
+        .animation(.smooth, value: hasCompletedOnboarding)
     }
 }
 
@@ -26,6 +30,7 @@ struct ContentView: View {
 
 struct LockScreen: View {
     @EnvironmentObject var biometricService: BiometricService
+    @State private var hasAttemptedAutoAuth = false
 
     var body: some View {
         VStack(spacing: 32) {
@@ -33,12 +38,13 @@ struct LockScreen: View {
 
             Image(systemName: "key.fill")
                 .font(.system(size: 64))
-                .foregroundStyle(.blue)
+                .foregroundStyle(
+                    LinearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
 
             VStack(spacing: 8) {
                 Text("ContextKey")
                     .font(.largeTitle.bold())
-
                 Text("Your AI identity, protected.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -47,9 +53,7 @@ struct LockScreen: View {
             Spacer()
 
             Button {
-                Task {
-                    await biometricService.authenticate()
-                }
+                Task { await biometricService.authenticate() }
             } label: {
                 Label(unlockLabel, systemImage: unlockIcon)
                     .font(.headline)
@@ -66,8 +70,12 @@ struct LockScreen: View {
                     .padding(.horizontal)
             }
 
-            Spacer()
-                .frame(height: 40)
+            Spacer().frame(height: 40)
+        }
+        .onAppear {
+            guard !hasAttemptedAutoAuth else { return }
+            hasAttemptedAutoAuth = true
+            Task { await biometricService.authenticate() }
         }
     }
 

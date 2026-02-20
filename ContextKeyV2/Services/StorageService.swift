@@ -73,15 +73,17 @@ final class StorageService: ObservableObject {
             existingProfile = UserContextProfile()
         }
 
-        // Merge new facts with existing
+        // Merge new facts with existing — tracks frequency across imports
         for newFact in newFacts {
             let normalized = newFact.content.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
             if let idx = existingProfile.facts.firstIndex(where: {
                 $0.content.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == normalized
             }) {
-                // Update existing fact: bump confidence and update date
+                // Update existing fact: bump confidence, frequency, and update date
                 existingProfile.facts[idx].confidence = min(1.0, existingProfile.facts[idx].confidence + 0.1)
+                existingProfile.facts[idx].frequency += newFact.frequency
                 existingProfile.facts[idx].lastSeenDate = max(existingProfile.facts[idx].lastSeenDate, newFact.lastSeenDate)
+                existingProfile.facts[idx].sources.append(contentsOf: newFact.sources)
             } else {
                 existingProfile.facts.append(newFact)
             }

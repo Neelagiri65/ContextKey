@@ -1,6 +1,6 @@
 name: ContextKeyV2
 options:
-  bundleIdPrefix: com.nativerse.contextkey
+  bundleIdPrefix: com.contextkey
   deploymentTarget:
     iOS: "26.0"
   xcodeVersion: "16.4"
@@ -9,9 +9,9 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    DEVELOPMENT_TEAM: ""
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: 1
+    DEVELOPMENT_TEAM: "6C4U4QF7DL"
+    MARKETING_VERSION: "2.0.0"
+    CURRENT_PROJECT_VERSION: 8
     GENERATE_INFOPLIST_FILE: YES
 
 targets:
@@ -30,7 +30,7 @@ targets:
         INFOPLIST_KEY_NSFaceIDUsageDescription: "ContextKey uses Face ID to protect your personal context data."
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "ContextKey uses speech recognition to transcribe your voice notes on-device."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "ContextKey needs microphone access to record voice notes for context extraction."
-        PRODUCT_BUNDLE_IDENTIFIER: com.nativerse.contextkey.v2
+        PRODUCT_BUNDLE_IDENTIFIER: com.contextkey.app
     resources:
       - ContextKeyV2/Assets.xcassets
 
@@ -43,4 +43,4 @@ targets:
       - target: ContextKeyV2
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.nativerse.contextkey.v2.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.contextkey.app.tests

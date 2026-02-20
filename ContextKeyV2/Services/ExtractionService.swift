@@ -1,9 +1,9 @@
 import Foundation
-import FoundationModels
 
 // MARK: - Extraction Service
 
-/// Extracts structured context from parsed conversations using Apple Foundation Models SLM
+/// Extracts structured context from parsed conversations using the selected SLM provider.
+/// Supports Apple Foundation Models (iOS 26+) and open-source on-device LLMs.
 @MainActor
 final class ExtractionService: ObservableObject {
 
@@ -12,7 +12,33 @@ final class ExtractionService: ObservableObject {
     @Published var statusMessage = ""
     @Published var extractedFacts: [ContextFact] = []
 
-    private let session = LanguageModelSession()
+    /// The active SLM engine — user can change this in settings
+    @Published var selectedEngine: SLMEngine {
+        didSet {
+            UserDefaults.standard.set(selectedEngine.rawValue, forKey: "selectedSLMEngine")
+            provider = SLMProviderFactory.create(for: selectedEngine)
+        }
+    }
+
+    private var provider: any SLMProvider
+
+    init() {
+        // Restore user's SLM preference, default to Apple FM if available
+        let savedEngine = UserDefaults.standard.string(forKey: "selectedSLMEngine")
+            .flatMap { SLMEngine(rawValue: $0) }
+
+        let engine: SLMEngine
+        if let saved = savedEngine, saved.isAvailable {
+            engine = saved
+        } else if SLMEngine.appleFoundationModels.isAvailable {
+            engine = .appleFoundationModels
+        } else {
+            engine = .onDeviceOpenSource
+        }
+
+        self.selectedEngine = engine
+        self.provider = SLMProviderFactory.create(for: engine)
+    }
 
     // MARK: - Public API
 
@@ -85,7 +111,7 @@ final class ExtractionService: ObservableObject {
     }
 
     /// Extract context from a single text input (voice transcript or manual entry)
-    func extractFromSingleInput(_ text: String, source: Platform = .claude) async throws -> [ContextFact] {
+    func extractFromSingleInput(_ text: String, source: Platform = .manual) async throws -> [ContextFact] {
         isProcessing = true
         statusMessage = "Analyzing your input..."
 
@@ -114,19 +140,22 @@ final class ExtractionService: ObservableObject {
     ) async throws -> [ContextFact] {
         let prompt = """
         Analyze the following conversation messages from a user. Extract factual information \
-        about the user — their role, skills, projects, preferences, goals, background, and interests. \
-        Only extract facts that are clearly stated or strongly implied. Do not invent or assume.
+        about the user organized into these categories:
+
+        - Persona: their role, job title, expertise level, industry, years of experience
+        - Skills & Stack: tools, languages, frameworks, platforms they use or know
+        - Communication Style: how they prefer AI responses — tone, length, format, interaction style
+        - Active Projects: what they're currently building or working on
+        - Goals & Priorities: objectives they're trying to achieve, success criteria
+        - Constraints: limitations, things they avoid, boundaries they set
+        - Work Patterns: how they use AI — coding, writing, research, email, brainstorming, review
+
+        Extract everything clearly stated or strongly implied. Be specific, not generic.
 
         Conversation: "\(conversationTitle)"
-        Messages:
-        \(text)
         """
 
-        let response = try await session.respond(
-            to: prompt,
-            generating: ExtractedFacts.self
-        )
-        let extracted = response.content
+        let extracted = try await provider.extract(from: text, prompt: prompt)
 
         let source = ContextSource(
             platform: platform,
@@ -140,18 +169,20 @@ final class ExtractionService: ObservableObject {
     private func extractFromMemory(_ memory: String, platform: Platform) async throws -> [ContextFact] {
         let prompt = """
         Analyze the following AI memory summary about a user. Extract structured facts about \
-        the user — their role, skills, projects, preferences, goals, background, and interests. \
-        This is a trusted source, so extract everything mentioned.
+        the user into these categories:
 
-        Memory:
-        \(memory)
+        - Persona: role, title, expertise, industry
+        - Skills & Stack: tools, languages, frameworks
+        - Communication Style: response preferences, tone, format
+        - Active Projects: current work
+        - Goals & Priorities: objectives, success criteria
+        - Constraints: boundaries, limitations
+        - Work Patterns: how they use AI
+
+        This is a trusted source, so extract everything mentioned. Be specific.
         """
 
-        let response = try await session.respond(
-            to: prompt,
-            generating: ExtractedFacts.self
-        )
-        let extracted = response.content
+        let extracted = try await provider.extract(from: memory, prompt: prompt)
 
         let source = ContextSource(
             platform: platform,
@@ -165,78 +196,78 @@ final class ExtractionService: ObservableObject {
     // MARK: - Private: Convert & Deduplicate
 
     private func convertToFacts(
-        _ extracted: ExtractedFacts,
+        _ extracted: ExtractedFactsRaw,
         source: ContextSource,
         highConfidence: Bool = false
     ) -> [ContextFact] {
         var facts: [ContextFact] = []
         let confidence = highConfidence ? 0.9 : 0.6
 
-        if let role = extracted.role, !role.isEmpty {
+        for item in extracted.persona where !item.isEmpty {
             facts.append(ContextFact(
-                content: role,
+                content: item,
                 layer: .coreIdentity,
-                category: .role,
+                pillar: .persona,
                 confidence: confidence,
                 sources: [source]
             ))
         }
 
-        for skill in extracted.skills where !skill.isEmpty {
+        for item in extracted.skillsAndStack where !item.isEmpty {
             facts.append(ContextFact(
-                content: skill,
+                content: item,
                 layer: .coreIdentity,
-                category: .skill,
+                pillar: .skillsAndStack,
                 confidence: confidence,
                 sources: [source]
             ))
         }
 
-        for project in extracted.projects where !project.isEmpty {
+        for item in extracted.communicationStyle where !item.isEmpty {
             facts.append(ContextFact(
-                content: project,
+                content: item,
+                layer: .coreIdentity,
+                pillar: .communicationStyle,
+                confidence: confidence,
+                sources: [source]
+            ))
+        }
+
+        for item in extracted.activeProjects where !item.isEmpty {
+            facts.append(ContextFact(
+                content: item,
                 layer: .currentContext,
-                category: .project,
+                pillar: .activeProjects,
                 confidence: confidence,
                 sources: [source]
             ))
         }
 
-        for pref in extracted.preferences where !pref.isEmpty {
+        for item in extracted.goalsAndPriorities where !item.isEmpty {
             facts.append(ContextFact(
-                content: pref,
-                layer: .coreIdentity,
-                category: .preference,
-                confidence: confidence,
-                sources: [source]
-            ))
-        }
-
-        for goal in extracted.goals where !goal.isEmpty {
-            facts.append(ContextFact(
-                content: goal,
+                content: item,
                 layer: .currentContext,
-                category: .goal,
+                pillar: .goalsAndPriorities,
                 confidence: confidence,
                 sources: [source]
             ))
         }
 
-        for bg in extracted.background where !bg.isEmpty {
+        for item in extracted.constraints where !item.isEmpty {
             facts.append(ContextFact(
-                content: bg,
+                content: item,
                 layer: .coreIdentity,
-                category: .background,
+                pillar: .constraints,
                 confidence: confidence,
                 sources: [source]
             ))
         }
 
-        for interest in extracted.interests where !interest.isEmpty {
+        for item in extracted.workPatterns where !item.isEmpty {
             facts.append(ContextFact(
-                content: interest,
-                layer: .activeContext,
-                category: .interest,
+                content: item,
+                layer: .currentContext,
+                pillar: .workPatterns,
                 confidence: confidence,
                 sources: [source]
             ))
@@ -246,6 +277,7 @@ final class ExtractionService: ObservableObject {
     }
 
     /// Deduplicate facts by comparing content similarity (case-insensitive)
+    /// Tracks frequency — duplicates increment the count instead of being discarded
     private func deduplicateAndMerge(_ facts: [ContextFact]) -> [ContextFact] {
         var merged: [ContextFact] = []
 
@@ -255,25 +287,19 @@ final class ExtractionService: ObservableObject {
             if let existingIndex = merged.firstIndex(where: {
                 $0.content.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == normalized
             }) {
-                // Merge: increase confidence and combine sources
-                var existing = merged[existingIndex]
-                existing.confidence = min(1.0, existing.confidence + 0.1)
-                let newSources = existing.sources + fact.sources
-                merged[existingIndex] = ContextFact(
-                    content: existing.content,
-                    layer: existing.layer,
-                    category: existing.category,
-                    confidence: existing.confidence,
-                    sources: newSources,
-                    lastSeenDate: max(existing.lastSeenDate, fact.lastSeenDate)
-                )
+                // Merge: increase confidence, bump frequency, combine sources
+                merged[existingIndex].confidence = min(1.0, merged[existingIndex].confidence + 0.1)
+                merged[existingIndex].frequency += fact.frequency
+                merged[existingIndex].lastSeenDate = max(merged[existingIndex].lastSeenDate, fact.lastSeenDate)
+                merged[existingIndex].sources.append(contentsOf: fact.sources)
             } else {
                 merged.append(fact)
             }
         }
 
-        // Sort: highest confidence first, then by layer importance
+        // Sort: frequency first, then layer importance, then confidence
         return merged.sorted { a, b in
+            if a.frequency != b.frequency { return a.frequency > b.frequency }
             if a.layer != b.layer {
                 let order: [ContextLayer] = [.coreIdentity, .currentContext, .activeContext]
                 return (order.firstIndex(of: a.layer) ?? 0) < (order.firstIndex(of: b.layer) ?? 0)

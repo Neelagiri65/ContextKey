@@ -47,12 +47,19 @@ struct ProcessingView: View {
         VStack(spacing: 32) {
             Spacer()
 
-            ProgressView(value: extractionService.progress) {
-                Text(extractionService.statusMessage)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            VStack(spacing: 16) {
+                ProgressView(value: extractionService.progress) {
+                    Text(extractionService.statusMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .progressViewStyle(.linear)
+
+                // SLM engine indicator
+                Text("Using \(extractionService.selectedEngine.displayName)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
-            .progressViewStyle(.linear)
             .padding(.horizontal, 40)
 
             if let result = parseResult {
@@ -69,21 +76,35 @@ struct ProcessingView: View {
         }
     }
 
-    // MARK: - Review View
+    // MARK: - Review View (Grouped by Pillar)
 
     private var reviewView: some View {
         List {
-            ForEach(ContextLayer.allCases, id: \.self) { layer in
-                let layerFacts = editableFacts.filter { $0.layer == layer }
-                if !layerFacts.isEmpty {
-                    Section(header: Text(layerTitle(layer))) {
-                        ForEach(Array(layerFacts.enumerated()), id: \.element.id) { _, fact in
+            ForEach(ContextPillar.allCases, id: \.self) { pillar in
+                let pillarFacts = editableFacts.filter { $0.pillar == pillar }
+                if !pillarFacts.isEmpty {
+                    Section(header: pillarHeader(pillar, count: pillarFacts.count)) {
+                        ForEach(pillarFacts) { fact in
                             FactRow(fact: fact)
                         }
                         .onDelete { offsets in
-                            deleteFacts(in: layer, at: offsets)
+                            deleteFacts(in: pillar, at: offsets)
                         }
                     }
+                }
+            }
+
+            // Summary
+            Section {
+                HStack {
+                    Text("\(editableFacts.count) facts extracted")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    let pillarsWithFacts = Set(editableFacts.map { $0.pillar }).count
+                    Text("\(pillarsWithFacts)/7 pillars")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -98,6 +119,20 @@ struct ProcessingView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+        }
+    }
+
+    private func pillarHeader(_ pillar: ContextPillar, count: Int) -> some View {
+        HStack {
+            Image(systemName: pillar.iconName)
+                .font(.caption)
+                .foregroundStyle(pillarColor(pillar))
+            Text(pillar.displayName)
+                .foregroundStyle(pillarColor(pillar))
+            Spacer()
+            Text("\(count)")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -148,14 +183,14 @@ struct ProcessingView: View {
         }
     }
 
-    private func deleteFacts(in layer: ContextLayer, at offsets: IndexSet) {
-        let layerFacts = editableFacts.filter { $0.layer == layer }
-        let idsToRemove = offsets.map { layerFacts[$0].id }
+    private func deleteFacts(in pillar: ContextPillar, at offsets: IndexSet) {
+        let pillarFacts = editableFacts.filter { $0.pillar == pillar }
+        let idsToRemove = offsets.map { pillarFacts[$0].id }
         editableFacts.removeAll { idsToRemove.contains($0.id) }
     }
 
     private func saveAndFinish() {
-        let platform = parseResult?.platform ?? .claude
+        let platform = parseResult?.platform ?? .manual
         let stats = ImportRecord(
             platform: platform,
             conversationCount: parseResult?.totalConversations ?? 0,
@@ -176,66 +211,72 @@ struct ProcessingView: View {
         }
     }
 
-    private func layerTitle(_ layer: ContextLayer) -> String {
-        switch layer {
-        case .coreIdentity: return "Identity"
-        case .currentContext: return "Current Context"
-        case .activeContext: return "Right Now"
+    private func pillarColor(_ pillar: ContextPillar) -> Color {
+        switch pillar.color {
+        case "blue": return .blue
+        case "purple": return .purple
+        case "green": return .green
+        case "orange": return .orange
+        case "red": return .red
+        case "gray": return .gray
+        case "teal": return .teal
+        default: return .blue
         }
     }
 }
 
-// MARK: - Fact Row
+// MARK: - Fact Row (Updated for 7-Pillar Framework)
 
 struct FactRow: View {
     let fact: ContextFact
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(categoryLabel(fact.category))
-                    .font(.caption2.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(categoryColor(fact.category))
-                    .clipShape(Capsule())
+            Text(fact.content)
+                .font(.body)
 
-                Spacer()
+            HStack(spacing: 8) {
+                // Frequency badge
+                if fact.frequency > 1 {
+                    Text("\(fact.frequency)x")
+                        .font(.caption2.bold())
+                        .foregroundStyle(factPillarColor)
+                }
 
-                // Confidence indicator
+                // Confidence
                 Text("\(Int(fact.confidence * 100))%")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+
+                Spacer()
+
+                // Layer tag
+                Text(layerLabel(fact.layer))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
-
-            Text(fact.content)
-                .font(.body)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 
-    private func categoryLabel(_ cat: ContextCategory) -> String {
-        switch cat {
-        case .role: return "Role"
-        case .skill: return "Skill"
-        case .project: return "Project"
-        case .preference: return "Preference"
-        case .goal: return "Goal"
-        case .interest: return "Interest"
-        case .background: return "Background"
+    private var factPillarColor: Color {
+        switch fact.pillar.color {
+        case "blue": return .blue
+        case "purple": return .purple
+        case "green": return .green
+        case "orange": return .orange
+        case "red": return .red
+        case "gray": return .gray
+        case "teal": return .teal
+        default: return .blue
         }
     }
 
-    private func categoryColor(_ cat: ContextCategory) -> Color {
-        switch cat {
-        case .role: return .blue
-        case .skill: return .purple
-        case .project: return .green
-        case .preference: return .orange
-        case .goal: return .red
-        case .interest: return .cyan
-        case .background: return .gray
+    private func layerLabel(_ layer: ContextLayer) -> String {
+        switch layer {
+        case .coreIdentity: return "Core"
+        case .currentContext: return "Current"
+        case .activeContext: return "Active"
         }
     }
 }

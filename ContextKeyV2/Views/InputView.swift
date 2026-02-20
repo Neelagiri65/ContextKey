@@ -55,7 +55,7 @@ struct InputView: View {
                     InputMethodButton(
                         icon: "pencil.line",
                         title: "Type it",
-                        subtitle: "Write it yourself",
+                        subtitle: "Guided interview",
                         color: .green
                     ) {
                         showManualEntry = true
@@ -81,7 +81,7 @@ struct InputView: View {
                 }
             }
             .sheet(isPresented: $showManualEntry) {
-                ManualEntryView { text in
+                GuidedInputView { text in
                     pendingText = text
                     showProcessing = true
                 }
@@ -138,54 +138,3 @@ struct InputMethodButton: View {
     }
 }
 
-// MARK: - Manual Entry View
-
-struct ManualEntryView: View {
-    @Environment(\.dismiss) var dismiss
-    @State private var text = ""
-    let onComplete: (String) -> Void
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                Text("Tell us about yourself")
-                    .font(.headline)
-                    .padding(.top)
-
-                Text("Describe your role, skills, projects, and preferences.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-
-                TextEditor(text: $text)
-                    .frame(maxHeight: .infinity)
-                    .padding(12)
-                    .background(Color(.systemGray6))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal)
-
-                Button {
-                    dismiss()
-                    onComplete(text)
-                } label: {
-                    Text("Process")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).count < 20)
-                .padding(.horizontal)
-                .padding(.bottom)
-            }
-            .navigationTitle("Type it")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-    }
-}
