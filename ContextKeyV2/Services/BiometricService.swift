@@ -1,0 +1,67 @@
+import Foundation
+import LocalAuthentication
+
+// MARK: - Biometric Service
+
+/// Handles FaceID/TouchID authentication
+@MainActor
+final class BiometricService: ObservableObject {
+
+    @Published var isAuthenticated = false
+    @Published var isLocked = true
+    @Published var errorMessage: String?
+
+    private let context = LAContext()
+
+    enum BiometricType {
+        case faceID
+        case touchID
+        case passcode
+        case none
+    }
+
+    var availableBiometric: BiometricType {
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            // Check if at least passcode is available
+            if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) {
+                return .passcode
+            }
+            return .none
+        }
+
+        switch context.biometryType {
+        case .faceID: return .faceID
+        case .touchID: return .touchID
+        default: return .passcode
+        }
+    }
+
+    /// Authenticate the user — gates app access and copy actions
+    func authenticate(reason: String = "Unlock your context") async -> Bool {
+        let context = LAContext()
+        context.localizedCancelTitle = "Cancel"
+
+        // Try biometrics first, fall back to passcode
+        let policy: LAPolicy = .deviceOwnerAuthentication
+
+        do {
+            let success = try await context.evaluatePolicy(policy, localizedReason: reason)
+            isAuthenticated = success
+            isLocked = !success
+            errorMessage = nil
+            return success
+        } catch {
+            isAuthenticated = false
+            isLocked = true
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Lock the app (e.g., when going to background)
+    func lock() {
+        isAuthenticated = false
+        isLocked = true
+    }
+}
