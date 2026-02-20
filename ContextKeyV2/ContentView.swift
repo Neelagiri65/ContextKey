@@ -8,12 +8,13 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if biometricService.isLocked {
-                LockScreen()
-            } else if storageService.hasStoredProfile {
-                HomeView()
-            } else {
+            if !storageService.hasStoredProfile {
+                // First-time user: go straight to input, no lock gate needed
                 InputView()
+            } else if biometricService.isLocked {
+                LockScreen()
+            } else {
+                HomeView()
             }
         }
         .animation(.smooth, value: biometricService.isLocked)
