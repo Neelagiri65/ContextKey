@@ -20,8 +20,10 @@ final class VoiceService: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var speechRecognizer: SFSpeechRecognizer?
     private var durationTimer: Timer?
+    private var retryCount = 0
 
     static let maxDuration: TimeInterval = 90
+    private static let maxRetries = 1
 
     init() {
         // Try current locale first, then en-US fallback
@@ -70,9 +72,11 @@ final class VoiceService: ObservableObject {
         guard !isRecording else { return }
 
         errorMessage = nil
-        liveTranscript = ""
-        finalTranscript = ""
-        recordingDuration = 0
+        if retryCount == 0 {
+            liveTranscript = ""
+            finalTranscript = ""
+            recordingDuration = 0
+        }
         audioLevel = 0.0
 
         guard let recognizer = speechRecognizer else {
@@ -87,7 +91,7 @@ final class VoiceService: ObservableObject {
 
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+            try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
             let engine = AVAudioEngine()
@@ -157,13 +161,18 @@ final class VoiceService: ObservableObject {
                             break // Normal cancel
                         case 209:
                             self.errorMessage = "Recognition interrupted. Please try again."
-                        case 1100:
-                            // "Connection to speech process invalidated" — common on first attempt
-                            self.errorMessage = "Speech engine restarting. Please try again."
+                        case 1100, 1101:
+                            // Connection invalidated — common on first attempt, auto-retry once
                             self.stopRecording()
-                        case 1101:
-                            self.errorMessage = "Speech connection error. Please try again."
-                            self.stopRecording()
+                            if self.retryCount < Self.maxRetries {
+                                self.retryCount += 1
+                                Task {
+                                    try? await Task.sleep(for: .milliseconds(500))
+                                    self.startRecording()
+                                }
+                            } else {
+                                self.errorMessage = "Speech engine error. Please try again."
+                            }
                         default:
                             self.errorMessage = "Recognition error (\(error.code)): \(error.localizedDescription)"
                             self.stopRecording()
@@ -235,6 +244,7 @@ final class VoiceService: ObservableObject {
         errorMessage = nil
         recordingDuration = 0
         audioLevel = 0.0
+        retryCount = 0
         cleanupAudio()
     }
 

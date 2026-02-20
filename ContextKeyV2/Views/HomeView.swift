@@ -280,27 +280,20 @@ struct HomeView: View {
 
     private func copyContext() {
         guard let profile else { return }
+        UIPasteboard.general.string = profile.formattedContext()
+        copiedToClipboard = true
         Task {
-            let authed = await biometricService.authenticate(reason: "Copy your context")
-            guard authed else { return }
-            UIPasteboard.general.string = profile.formattedContext()
-            copiedToClipboard = true
             try? await Task.sleep(for: .seconds(2))
             copiedToClipboard = false
         }
     }
 
     private func launchAIApp(_ platform: Platform) {
-        Task {
-            let authed = await biometricService.authenticate(reason: "Copy context to \(platform.displayName)")
-            guard authed else { return }
+        guard let profile else { return }
+        UIPasteboard.general.string = profile.formattedContext()
 
-            guard let profile else { return }
-            UIPasteboard.general.string = profile.formattedContext()
-
-            if let scheme = platform.urlScheme, let url = URL(string: scheme) {
-                await UIApplication.shared.open(url)
-            }
+        if let scheme = platform.urlScheme, let url = URL(string: scheme) {
+            UIApplication.shared.open(url)
         }
     }
 
@@ -429,6 +422,20 @@ struct PillarCardView: View {
 struct EntityGraphView: View {
     let profile: UserContextProfile
     @State private var selectedNode: GraphNode?
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+
+    // Related pillar pairs (conceptually linked)
+    private let relatedPairs: [(Int, Int)] = [
+        (0, 1), // Persona ↔ Skills
+        (1, 3), // Skills ↔ Active Projects
+        (3, 4), // Active Projects ↔ Goals
+        (4, 5), // Goals ↔ Constraints
+        (6, 1), // Work Patterns ↔ Skills
+        (0, 2), // Persona ↔ Communication Style
+    ]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -440,12 +447,42 @@ struct EntityGraphView: View {
         .animation(.smooth, value: selectedNode?.id)
     }
 
-    // MARK: - Graph Canvas
+    // MARK: - Graph Canvas (Pannable + Zoomable)
 
     private var graphCanvas: some View {
         GeometryReader { geo in
             graphContent(size: geo.size)
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(dragGesture)
+                .gesture(magnificationGesture)
+                .onTapGesture { selectedNode = nil }
         }
+        .clipped()
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture()
+            .onChanged { value in
+                offset = CGSize(
+                    width: lastOffset.width + value.translation.width,
+                    height: lastOffset.height + value.translation.height
+                )
+            }
+            .onEnded { _ in
+                lastOffset = offset
+            }
+    }
+
+    private var magnificationGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let newScale: CGFloat = lastScale * value.magnification
+                scale = min(max(newScale, 0.5), 3.0)
+            }
+            .onEnded { _ in
+                lastScale = scale
+            }
     }
 
     private func graphContent(size: CGSize) -> some View {
@@ -455,7 +492,11 @@ struct EntityGraphView: View {
         let positions = computePositions(center: center, radius: radius, count: nodes.count)
 
         return ZStack {
+            // Hub lines (center to each node)
             connectionLines(center: center, positions: positions)
+            // Cross-pillar relationship lines
+            crossPillarLines(positions: positions, nodes: nodes)
+            // Center + pillar nodes
             centerNodeLayer(center: center)
             pillarNodesLayer(nodes: nodes, positions: positions)
         }
@@ -467,23 +508,44 @@ struct EntityGraphView: View {
                 path.move(to: center)
                 path.addLine(to: positions[index])
             }
-            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+            .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+        }
+    }
+
+    private func crossPillarLines(positions: [CGPoint], nodes: [GraphNode]) -> some View {
+        ForEach(0..<relatedPairs.count, id: \.self) { i in
+            let pair = relatedPairs[i]
+            let fromIdx = pair.0
+            let toIdx = pair.1
+            // Only draw if both pillars have facts
+            if fromIdx < nodes.count && toIdx < nodes.count
+                && nodes[fromIdx].count > 0 && nodes[toIdx].count > 0 {
+                Path { path in
+                    path.move(to: positions[fromIdx])
+                    path.addLine(to: positions[toIdx])
+                }
+                .stroke(
+                    nodes[fromIdx].color.opacity(0.12),
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+                )
+            }
         }
     }
 
     private func centerNodeLayer(center: CGPoint) -> some View {
         CenterNodeView()
             .position(center)
-            .onTapGesture { selectedNode = nil }
     }
 
     private func pillarNodesLayer(nodes: [GraphNode], positions: [CGPoint]) -> some View {
         ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
-            let isSelected = selectedNode?.id == node.id
+            let isSelected: Bool = selectedNode?.id == node.id
             PillarNodeView(node: node, isSelected: isSelected)
                 .position(positions[index])
                 .onTapGesture {
-                    selectedNode = isSelected ? nil : node
+                    withAnimation(.smooth) {
+                        selectedNode = isSelected ? nil : node
+                    }
                 }
         }
     }

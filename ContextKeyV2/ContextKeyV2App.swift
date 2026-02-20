@@ -13,7 +13,7 @@ struct ContextKeyV2App: App {
                 .environmentObject(storageService)
                 .onChange(of: scenePhase) { _, newPhase in
                     // Only lock when going to background if there's data to protect
-                    if (newPhase == .background || newPhase == .inactive),
+                    if newPhase == .background,
                        storageService.hasStoredProfile {
                         biometricService.lock()
                     }
