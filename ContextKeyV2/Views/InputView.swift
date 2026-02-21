@@ -10,7 +10,7 @@ enum InputTab: String, CaseIterable {
 }
 
 struct InputView: View {
-    @EnvironmentObject var storageService: StorageService
+    var storageService: StorageService
     @Environment(\.dismiss) var dismiss
     @State private var selectedTab: InputTab = .voice
     @State private var showImport = false
@@ -70,6 +70,7 @@ struct InputView: View {
                     claudeMemory: pendingClaudeMemory,
                     directText: pendingText
                 )
+                .environmentObject(storageService)
             }
         }
     }

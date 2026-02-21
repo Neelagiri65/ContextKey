@@ -21,6 +21,8 @@ final class ExtractionService: ObservableObject {
     }
 
     private var provider: any SLMProvider
+    private let fallbackProvider: any SLMProvider = HeuristicProvider()
+    @Published var lastError: String?
 
     init() {
         // Restore user's SLM preference, default to Apple FM if available
@@ -33,7 +35,8 @@ final class ExtractionService: ObservableObject {
         } else if SLMEngine.appleFoundationModels.isAvailable {
             engine = .appleFoundationModels
         } else {
-            engine = .onDeviceOpenSource
+            // Skip onDeviceOpenSource (not implemented) — go straight to heuristic
+            engine = .appleFoundationModels // Will use HeuristicProvider as fallback
         }
 
         self.selectedEngine = engine
@@ -56,8 +59,16 @@ final class ExtractionService: ObservableObject {
         // Step 1: If Claude memory is available, use it directly (it's pre-extracted context)
         if let memory = claudeMemory {
             statusMessage = "Processing Claude memory..."
-            let memoryFacts = try await extractFromMemory(memory, platform: .claude)
-            allFacts.append(contentsOf: memoryFacts)
+            do {
+                let memoryFacts = try await extractFromMemory(memory, platform: .claude)
+                allFacts.append(contentsOf: memoryFacts)
+            } catch {
+                lastError = "Memory extraction: \(error.localizedDescription)"
+                // Try fallback for memory too
+                if let fallbackFacts = try? await extractWithFallback(memory, platform: .claude, conversationTitle: "Claude Memory", conversationDate: Date()) {
+                    allFacts.append(contentsOf: fallbackFacts)
+                }
+            }
             progress = 0.2
         }
 
@@ -88,8 +99,20 @@ final class ExtractionService: ObservableObject {
                 )
                 allFacts.append(contentsOf: facts)
             } catch {
-                // Skip failed extractions — don't crash on one bad conversation
-                continue
+                // Primary provider failed — try fallback heuristic provider
+                lastError = "Primary: \(error.localizedDescription)"
+                do {
+                    let fallbackFacts = try await extractWithFallback(
+                        truncated,
+                        platform: parseResult.platform,
+                        conversationTitle: conversation.title,
+                        conversationDate: conversation.createdAt
+                    )
+                    allFacts.append(contentsOf: fallbackFacts)
+                } catch {
+                    // Both providers failed — skip this conversation
+                    continue
+                }
             }
 
             // Update progress
@@ -99,7 +122,7 @@ final class ExtractionService: ObservableObject {
         }
 
         // Step 3: Deduplicate and merge
-        statusMessage = "Organizing your context..."
+        statusMessage = "Organizing \(allFacts.count) raw facts..."
         let deduped = deduplicateAndMerge(allFacts)
 
         extractedFacts = deduped
@@ -115,12 +138,25 @@ final class ExtractionService: ObservableObject {
         isProcessing = true
         statusMessage = "Analyzing your input..."
 
-        let facts = try await extractFromText(
-            String(text.prefix(3000)),
-            platform: source,
-            conversationTitle: "Direct input",
-            conversationDate: Date()
-        )
+        var facts: [ContextFact]
+        do {
+            facts = try await extractFromText(
+                String(text.prefix(3000)),
+                platform: source,
+                conversationTitle: "Direct input",
+                conversationDate: Date()
+            )
+        } catch {
+            // Primary failed, try fallback
+            lastError = "Primary: \(error.localizedDescription)"
+            statusMessage = "Using backup extraction..."
+            facts = try await extractWithFallback(
+                String(text.prefix(3000)),
+                platform: source,
+                conversationTitle: "Direct input",
+                conversationDate: Date()
+            )
+        }
 
         let deduped = deduplicateAndMerge(facts)
         extractedFacts = deduped
@@ -191,6 +227,28 @@ final class ExtractionService: ObservableObject {
         )
 
         return convertToFacts(extracted, source: source, highConfidence: true)
+    }
+
+    /// Fallback extraction using HeuristicProvider when primary provider fails
+    private func extractWithFallback(
+        _ text: String,
+        platform: Platform,
+        conversationTitle: String,
+        conversationDate: Date
+    ) async throws -> [ContextFact] {
+        let prompt = """
+        Extract factual information about the user from this text.
+        """
+
+        let extracted = try await fallbackProvider.extract(from: text, prompt: prompt)
+
+        let source = ContextSource(
+            platform: platform,
+            conversationCount: 1,
+            lastConversationDate: conversationDate
+        )
+
+        return convertToFacts(extracted, source: source)
     }
 
     // MARK: - Private: Convert & Deduplicate

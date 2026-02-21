@@ -63,8 +63,7 @@ struct HomeView: View {
                 }
             }
             .sheet(isPresented: $showInput) {
-                InputView()
-                    .environmentObject(storageService)
+                InputView(storageService: storageService)
                     .onDisappear { loadProfile() }
             }
             .sheet(item: $editingPillar) { pillar in
@@ -209,9 +208,10 @@ struct HomeView: View {
 
     private var aiAppBar: some View {
         VStack(spacing: 8) {
-            Text("Open in AI App")
+            Text(copiedToClipboard ? "Copied! Switch to your AI app and paste." : "Copy context for AI app")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(copiedToClipboard ? .blue : .secondary)
+                .animation(.smooth, value: copiedToClipboard)
 
             HStack(spacing: 20) {
                 ForEach(Platform.aiPlatforms, id: \.self) { platform in
@@ -291,9 +291,10 @@ struct HomeView: View {
     private func launchAIApp(_ platform: Platform) {
         guard let profile else { return }
         UIPasteboard.general.string = profile.formattedContext()
-
-        if let scheme = platform.urlScheme, let url = URL(string: scheme) {
-            UIApplication.shared.open(url)
+        copiedToClipboard = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copiedToClipboard = false
         }
     }
 

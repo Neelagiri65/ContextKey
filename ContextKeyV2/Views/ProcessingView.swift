@@ -20,8 +20,10 @@ struct ProcessingView: View {
             Group {
                 if extractionService.isProcessing {
                     processingView
-                } else if reviewMode {
+                } else if reviewMode && !editableFacts.isEmpty {
                     reviewView
+                } else if reviewMode && editableFacts.isEmpty {
+                    emptyResultView
                 } else if let error = errorMessage {
                     errorView(error)
                 } else {
@@ -136,6 +138,42 @@ struct ProcessingView: View {
         }
     }
 
+    // MARK: - Empty Result View
+
+    private var emptyResultView: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("No context found")
+                .font(.headline)
+            Text("We couldn't extract context from this input. Try providing more detail about yourself — your role, tools you use, or what you're working on.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+
+            if let lastErr = extractionService.lastError {
+                Text("Debug: \(lastErr)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 32)
+            }
+
+            Button("Try Again") {
+                reviewMode = false
+                Task { await startExtraction() }
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button("Go Back") { dismiss() }
+                .foregroundStyle(.secondary)
+
+            Spacer()
+        }
+    }
+
     // MARK: - Error View
 
     private func errorView(_ message: String) -> some View {
@@ -151,6 +189,11 @@ struct ProcessingView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+
+            Text("Engine: \(extractionService.selectedEngine.displayName)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+
             Button("Try Again") { Task { await startExtraction() } }
                 .buttonStyle(.borderedProminent)
             Button("Cancel") { dismiss() }

@@ -116,42 +116,88 @@ enum SLMProviderFactory {
 
 // MARK: - Heuristic Provider (Minimum Tier — Always Works)
 
-/// Fallback extraction using NaturalLanguage framework + pattern matching.
+/// Fallback extraction using keyword + pattern matching.
 /// No model needed — works on any device, any iOS version.
 struct HeuristicProvider: SLMProvider {
     let displayName = "Basic Extraction"
     let isAvailable = true
 
     func extract(from text: String, prompt: String) async throws -> ExtractedFactsRaw {
-        // Simple keyword-based extraction as absolute fallback
         var result = ExtractedFactsRaw()
 
         let lines = text.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        // Look for role/title indicators
-        let roleKeywords = ["i am a", "i'm a", "i work as", "my role", "my title", "my job"]
-        let skillKeywords = ["i use", "i know", "i work with", "my stack", "using swift", "using python"]
-        let projectKeywords = ["i'm building", "i am building", "working on", "my project", "current project"]
-        let goalKeywords = ["my goal", "i want to", "i'm trying", "objective", "planning to"]
+        // Role/persona indicators
+        let roleKeywords = ["i am a", "i'm a", "i work as", "my role", "my title", "my job",
+                            "i am an", "i'm an", "developer", "engineer", "designer", "manager",
+                            "years of experience", "senior", "junior", "lead", "founder", "ceo", "cto"]
+        // Skills/tech indicators
+        let skillKeywords = ["i use", "i know", "i work with", "my stack", "swift", "python",
+                             "javascript", "typescript", "react", "swiftui", "xcode", "figma",
+                             "docker", "kubernetes", "aws", "firebase", "node", "rust", "go",
+                             "java", "kotlin", "flutter", "vue", "angular", "django", "flask",
+                             "tensorflow", "pytorch", "coreml", "langchain", "openai", "claude"]
+        // Project indicators
+        let projectKeywords = ["i'm building", "i am building", "working on", "my project",
+                               "current project", "building a", "developing a", "creating a",
+                               "my app", "our product", "our app", "the app", "this project"]
+        // Goal indicators
+        let goalKeywords = ["my goal", "i want to", "i'm trying", "objective", "planning to",
+                            "hope to", "aim to", "target", "ship", "launch", "release",
+                            "deadline", "by end of", "this quarter", "this month"]
+        // Communication style
+        let styleKeywords = ["prefer", "concise", "detailed", "brief", "verbose", "code-first",
+                             "no fluff", "step by step", "explain", "don't explain",
+                             "just give me", "show me the code", "be direct"]
+        // Constraints
+        let constraintKeywords = ["don't", "avoid", "never", "no cloud", "privacy", "on-device",
+                                  "offline", "constraint", "limitation", "can't use", "not allowed",
+                                  "budget", "free tier", "open source only"]
+        // Work patterns
+        let patternKeywords = ["i usually", "i typically", "my workflow", "i debug", "i review",
+                               "brainstorm", "code review", "pair program", "iterate",
+                               "i research", "i write", "i draft", "help me with"]
 
         for line in lines {
             let lower = line.lowercased()
             if roleKeywords.contains(where: { lower.contains($0) }) {
-                result.persona.append(line)
+                result.persona.append(cleanFact(line))
             }
             if skillKeywords.contains(where: { lower.contains($0) }) {
-                result.skillsAndStack.append(line)
+                result.skillsAndStack.append(cleanFact(line))
             }
             if projectKeywords.contains(where: { lower.contains($0) }) {
-                result.activeProjects.append(line)
+                result.activeProjects.append(cleanFact(line))
             }
             if goalKeywords.contains(where: { lower.contains($0) }) {
-                result.goalsAndPriorities.append(line)
+                result.goalsAndPriorities.append(cleanFact(line))
+            }
+            if styleKeywords.contains(where: { lower.contains($0) }) {
+                result.communicationStyle.append(cleanFact(line))
+            }
+            if constraintKeywords.contains(where: { lower.contains($0) }) {
+                result.constraints.append(cleanFact(line))
+            }
+            if patternKeywords.contains(where: { lower.contains($0) }) {
+                result.workPatterns.append(cleanFact(line))
             }
         }
 
         return result
+    }
+
+    /// Clean up extracted text — truncate long lines, strip markup
+    private func cleanFact(_ text: String) -> String {
+        var cleaned = text
+        // Remove common markdown artifacts
+        cleaned = cleaned.replacingOccurrences(of: "```", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "**", with: "")
+        // Truncate to reasonable length
+        if cleaned.count > 200 {
+            cleaned = String(cleaned.prefix(200)) + "..."
+        }
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
