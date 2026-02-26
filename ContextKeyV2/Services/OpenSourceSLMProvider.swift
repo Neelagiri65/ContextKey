@@ -7,7 +7,7 @@ import Foundation
 /// Compatible with any iOS version.
 final class OpenSourceSLMProvider: SLMProvider, @unchecked Sendable {
     let displayName = "Open Source (On-Device)"
-    let isAvailable = true
+    let isAvailable = false  // Stub — not yet implemented (llama.cpp integration TODO)
 
     /// Model download state
     enum ModelState: Sendable {

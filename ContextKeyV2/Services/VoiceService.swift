@@ -1,6 +1,6 @@
 import Foundation
-import Speech
-import AVFoundation
+@preconcurrency import Speech
+@preconcurrency import AVFoundation
 
 // MARK: - Voice Service
 
@@ -34,6 +34,9 @@ final class VoiceService: ObservableObject {
             speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         }
     }
+
+    // Note: Cleanup handled by reset() called from onDisappear/scenePhase in InlineVoiceTab.
+    // deinit cannot access non-Sendable properties in Swift 6 @MainActor classes.
 
     // MARK: - Authorization
 
@@ -214,18 +217,13 @@ final class VoiceService: ObservableObject {
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioLevel = 0.0
 
-        // Cancel the task if no final result yet
-        if finalTranscript.isEmpty {
-            // Give it a moment to finalize
-            Task {
-                try? await Task.sleep(for: .seconds(1.5))
-                if self.finalTranscript.isEmpty && !self.liveTranscript.isEmpty {
-                    self.finalTranscript = self.liveTranscript
-                }
-            }
-        }
-
+        // Release audio session immediately — don't hold the mic
         cleanupAudio()
+
+        // Finalize transcript asynchronously (audio session already released)
+        if finalTranscript.isEmpty && !liveTranscript.isEmpty {
+            finalTranscript = liveTranscript
+        }
     }
 
     func reset() {

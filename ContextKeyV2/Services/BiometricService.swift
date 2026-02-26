@@ -11,8 +11,6 @@ final class BiometricService: ObservableObject {
     @Published var isLocked = true
     @Published var errorMessage: String?
 
-    private let context = LAContext()
-
     enum BiometricType {
         case faceID
         case touchID
@@ -21,6 +19,7 @@ final class BiometricService: ObservableObject {
     }
 
     var availableBiometric: BiometricType {
+        let context = LAContext()  // Fresh context each time — avoids stale state
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
             // Check if at least passcode is available
@@ -51,6 +50,11 @@ final class BiometricService: ObservableObject {
             isLocked = !success
             errorMessage = nil
             return success
+        } catch let error as LAError where error.code == .userCancel || error.code == .appCancel || error.code == .systemCancel {
+            // User or system cancelled — don't show an error message
+            isAuthenticated = false
+            isLocked = true
+            return false
         } catch {
             isAuthenticated = false
             isLocked = true

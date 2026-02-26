@@ -19,7 +19,7 @@ struct ImportView: View {
                     .font(.headline)
                     .padding(.top)
 
-                Text("You'll need to export your data from the platform first.")
+                Text("Export your data as JSON, then select the file here.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -107,7 +107,7 @@ struct ImportView: View {
             }
             .fileImporter(
                 isPresented: $showFilePicker,
-                allowedContentTypes: [.json, .zip],
+                allowedContentTypes: [.json],
                 allowsMultipleSelection: false
             ) { result in
                 handleFileSelection(result)
@@ -173,7 +173,9 @@ struct ImportView: View {
                 }
 
                 await MainActor.run {
-                    dismiss()
+                    isProcessingFile = false
+                    // Don't dismiss here — let the parent handle the transition
+                    // to avoid sheet race condition (two fullScreenCovers back-to-back)
                     onComplete(parseResult, claudeMemory)
                 }
             } catch {

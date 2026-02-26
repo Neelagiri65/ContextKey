@@ -7,12 +7,20 @@ enum InputTab: String, CaseIterable {
     case voice = "Voice"
     case type = "Type"
     case importChat = "Import"
+
+    /// Only tabs that are enabled by feature flags
+    static var enabledCases: [InputTab] {
+        allCases.filter { tab in
+            if tab == .voice { return FeatureFlags.voiceTranscribeEnabled }
+            return true
+        }
+    }
 }
 
 struct InputView: View {
     var storageService: StorageService
     @Environment(\.dismiss) var dismiss
-    @State private var selectedTab: InputTab = .voice
+    @State private var selectedTab: InputTab = .type
     @State private var showImport = false
     @State private var showProcessing = false
     @State private var pendingText: String?
@@ -22,22 +30,29 @@ struct InputView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Segmented control
-                Picker("Input Method", selection: $selectedTab) {
-                    ForEach(InputTab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
+                // Segmented control (only show enabled tabs)
+                if InputTab.enabledCases.count > 1 {
+                    Picker("Input Method", selection: $selectedTab) {
+                        ForEach(InputTab.enabledCases, id: \.self) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.top, 8)
 
                 // Tab content
                 switch selectedTab {
                 case .voice:
-                    InlineVoiceTab { transcript in
-                        pendingText = transcript
-                        showProcessing = true
+                    if FeatureFlags.voiceTranscribeEnabled {
+                        InlineVoiceTab { transcript in
+                            pendingText = transcript
+                            showProcessing = true
+                        }
+                    } else {
+                        // Voice disabled — should not be reachable, but guard against blank screen
+                        ContentUnavailableView("Voice Disabled", systemImage: "mic.slash", description: Text("Voice input is temporarily unavailable."))
                     }
                 case .type:
                     InlineTypeTab { text in
@@ -57,14 +72,31 @@ struct InputView: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .sheet(isPresented: $showImport) {
+            .fullScreenCover(isPresented: $showImport) {
                 ImportView { parseResult, claudeMemory in
+                    // Store the results, then dismiss import first
                     pendingParseResult = parseResult
                     pendingClaudeMemory = claudeMemory
-                    showProcessing = true
+                    // Dismiss import — onDisappear will trigger ProcessingView
+                    showImport = false
                 }
             }
-            .fullScreenCover(isPresented: $showProcessing) {
+            .onChange(of: showImport) { wasShowing, isShowing in
+                // When import cover finishes dismissing AND we have pending data, show processing
+                if wasShowing && !isShowing && pendingParseResult != nil {
+                    // Delay to let the dismiss animation complete
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(400))
+                        showProcessing = true
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showProcessing, onDismiss: {
+                // Clear pending data so stale results don't re-trigger ProcessingView
+                pendingText = nil
+                pendingParseResult = nil
+                pendingClaudeMemory = nil
+            }) {
                 ProcessingView(
                     parseResult: pendingParseResult,
                     claudeMemory: pendingClaudeMemory,
@@ -82,6 +114,7 @@ struct InlineVoiceTab: View {
     @StateObject private var voiceService = VoiceService()
     @State private var hasPermission = false
     @State private var permissionChecked = false
+    @Environment(\.scenePhase) private var scenePhase
     let onComplete: (String) -> Void
 
     var body: some View {
@@ -99,6 +132,15 @@ struct InlineVoiceTab: View {
         .task {
             hasPermission = await voiceService.requestPermissions()
             permissionChecked = true
+        }
+        .onDisappear {
+            voiceService.stopRecording()
+            voiceService.reset()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active {
+                voiceService.stopRecording()
+            }
         }
     }
 

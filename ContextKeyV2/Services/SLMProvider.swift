@@ -83,7 +83,7 @@ enum SLMEngine: String, Codable, CaseIterable, Sendable {
             #endif
             return false
         case .onDeviceOpenSource:
-            return true // Always available (model downloaded on demand)
+            return false // Not yet implemented (llama.cpp integration TODO)
         }
     }
 
@@ -109,7 +109,8 @@ enum SLMProviderFactory {
             // Fallback if somehow selected on older iOS
             return HeuristicProvider()
         case .onDeviceOpenSource:
-            return OpenSourceSLMProvider()
+            // Not yet implemented — fall back to heuristic extraction
+            return HeuristicProvider()
         }
     }
 }
@@ -125,42 +126,78 @@ struct HeuristicProvider: SLMProvider {
     func extract(from text: String, prompt: String) async throws -> ExtractedFactsRaw {
         var result = ExtractedFactsRaw()
 
-        let lines = text.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        // First pass: check for pillar-labeled text like "[Skills & Stack] Swift, SwiftUI"
+        // This handles input from InlineTypeTab's compileAnswers() format
+        let pillarLabelMap: [String: WritableKeyPath<ExtractedFactsRaw, [String]>] = [
+            "persona": \.persona,
+            "skills & stack": \.skillsAndStack,
+            "communication style": \.communicationStyle,
+            "active projects": \.activeProjects,
+            "goals & priorities": \.goalsAndPriorities,
+            "constraints": \.constraints,
+            "work patterns": \.workPatterns,
+        ]
 
-        // Role/persona indicators
+        let blocks = text.components(separatedBy: "\n\n")
+        var unlabeledLines: [String] = []
+
+        for block in blocks {
+            let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            // Check if this block starts with a [PillarName] label
+            var matched = false
+            if trimmed.hasPrefix("[") {
+                for (label, keyPath) in pillarLabelMap {
+                    let prefix = "[\(label)]"
+                    if trimmed.lowercased().hasPrefix(prefix) {
+                        let content = String(trimmed.dropFirst(prefix.count))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !content.isEmpty {
+                            result[keyPath: keyPath].append(cleanFact(content))
+                        }
+                        matched = true
+                        break
+                    }
+                }
+            }
+
+            if !matched {
+                // Collect for keyword-based extraction
+                for line in trimmed.components(separatedBy: .newlines) {
+                    let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !l.isEmpty { unlabeledLines.append(l) }
+                }
+            }
+        }
+
+        // Second pass: keyword matching on unlabeled lines
         let roleKeywords = ["i am a", "i'm a", "i work as", "my role", "my title", "my job",
                             "i am an", "i'm an", "developer", "engineer", "designer", "manager",
-                            "years of experience", "senior", "junior", "lead", "founder", "ceo", "cto"]
-        // Skills/tech indicators
+                            "years of experience", "senior", "junior", "lead", "founder", "ceo", "cto",
+                            "my name", "expertise"]
         let skillKeywords = ["i use", "i know", "i work with", "my stack", "swift", "python",
                              "javascript", "typescript", "react", "swiftui", "xcode", "figma",
                              "docker", "kubernetes", "aws", "firebase", "node", "rust", "go",
                              "java", "kotlin", "flutter", "vue", "angular", "django", "flask",
                              "tensorflow", "pytorch", "coreml", "langchain", "openai", "claude"]
-        // Project indicators
         let projectKeywords = ["i'm building", "i am building", "working on", "my project",
                                "current project", "building a", "developing a", "creating a",
                                "my app", "our product", "our app", "the app", "this project"]
-        // Goal indicators
         let goalKeywords = ["my goal", "i want to", "i'm trying", "objective", "planning to",
                             "hope to", "aim to", "target", "ship", "launch", "release",
                             "deadline", "by end of", "this quarter", "this month"]
-        // Communication style
         let styleKeywords = ["prefer", "concise", "detailed", "brief", "verbose", "code-first",
                              "no fluff", "step by step", "explain", "don't explain",
                              "just give me", "show me the code", "be direct"]
-        // Constraints
         let constraintKeywords = ["don't", "avoid", "never", "no cloud", "privacy", "on-device",
                                   "offline", "constraint", "limitation", "can't use", "not allowed",
                                   "budget", "free tier", "open source only"]
-        // Work patterns
         let patternKeywords = ["i usually", "i typically", "my workflow", "i debug", "i review",
                                "brainstorm", "code review", "pair program", "iterate",
                                "i research", "i write", "i draft", "help me with"]
 
-        for line in lines {
+        for line in unlabeledLines {
             let lower = line.lowercased()
             if roleKeywords.contains(where: { lower.contains($0) }) {
                 result.persona.append(cleanFact(line))

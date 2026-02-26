@@ -30,6 +30,7 @@ struct ContentView: View {
 
 struct LockScreen: View {
     @EnvironmentObject var biometricService: BiometricService
+    @Environment(\.scenePhase) private var scenePhase
     @State private var hasAttemptedAutoAuth = false
 
     var body: some View {
@@ -76,6 +77,13 @@ struct LockScreen: View {
             guard !hasAttemptedAutoAuth else { return }
             hasAttemptedAutoAuth = true
             Task { await biometricService.authenticate() }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active && biometricService.isLocked {
+                // Reset so FaceID auto-triggers when returning from background
+                hasAttemptedAutoAuth = false
+                Task { await biometricService.authenticate() }
+            }
         }
     }
 

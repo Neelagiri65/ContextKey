@@ -14,18 +14,20 @@ struct ProcessingView: View {
     @State private var reviewMode = false
     @State private var editableFacts: [ContextFact] = []
     @State private var errorMessage: String?
+    @State private var hasStartedExtraction = false
+    @State private var showSaveError: String?
 
     var body: some View {
         NavigationStack {
             Group {
                 if extractionService.isProcessing {
                     processingView
+                } else if let error = errorMessage {
+                    errorView(error)
                 } else if reviewMode && !editableFacts.isEmpty {
                     reviewView
                 } else if reviewMode && editableFacts.isEmpty {
                     emptyResultView
-                } else if let error = errorMessage {
-                    errorView(error)
                 } else {
                     ProgressView("Starting...")
                 }
@@ -39,6 +41,15 @@ struct ProcessingView: View {
             }
             .task {
                 await startExtraction()
+            }
+            .alert("Save Error", isPresented: Binding(
+                get: { showSaveError != nil },
+                set: { if !$0 { showSaveError = nil } }
+            )) {
+                Button("Try Again") { saveAndFinish() }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text(showSaveError ?? "")
             }
         }
     }
@@ -57,8 +68,8 @@ struct ProcessingView: View {
                 }
                 .progressViewStyle(.linear)
 
-                // SLM engine indicator
-                Text("Using \(extractionService.selectedEngine.displayName)")
+                // SLM engine indicator — shows actual provider, not just selected engine
+                Text("Using \(extractionService.activeProviderName)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -71,6 +82,13 @@ struct ProcessingView: View {
                     Text("\(result.totalMessages) messages")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+
+                    if extractionService.processedConversations > 0 {
+                        Text("\(extractionService.rawFactsFound) facts found so far")
+                            .font(.caption)
+                            .foregroundStyle(.blue)
+                            .padding(.top, 4)
+                    }
                 }
             }
 
@@ -154,15 +172,29 @@ struct ProcessingView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
 
-            if let lastErr = extractionService.lastError {
-                Text("Debug: \(lastErr)")
+            // Debug info
+            VStack(spacing: 4) {
+                Text("Engine: \(extractionService.activeProviderName)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 32)
+
+                if extractionService.processedConversations > 0 {
+                    Text("Processed \(extractionService.processedConversations)/\(extractionService.totalConversationsToProcess) conversations")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if let lastErr = extractionService.lastError {
+                    Text("Error: \(lastErr)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 32)
+                }
             }
 
             Button("Try Again") {
                 reviewMode = false
+                hasStartedExtraction = false
                 Task { await startExtraction() }
             }
             .buttonStyle(.borderedProminent)
@@ -190,12 +222,16 @@ struct ProcessingView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
 
-            Text("Engine: \(extractionService.selectedEngine.displayName)")
+            Text("Engine: \(extractionService.activeProviderName)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
 
-            Button("Try Again") { Task { await startExtraction() } }
-                .buttonStyle(.borderedProminent)
+            Button("Try Again") {
+                hasStartedExtraction = false
+                errorMessage = nil
+                Task { await startExtraction() }
+            }
+            .buttonStyle(.borderedProminent)
             Button("Cancel") { dismiss() }
             Spacer()
         }
@@ -204,6 +240,8 @@ struct ProcessingView: View {
     // MARK: - Logic
 
     private func startExtraction() async {
+        guard !hasStartedExtraction else { return }
+        hasStartedExtraction = true
         do {
             let facts: [ContextFact]
 
@@ -221,6 +259,8 @@ struct ProcessingView: View {
 
             editableFacts = facts
             reviewMode = true
+        } catch is CancellationError {
+            // User dismissed the view — do nothing, sheet is closing
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -250,7 +290,7 @@ struct ProcessingView: View {
             )
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            showSaveError = "Save failed: \(error.localizedDescription)"
         }
     }
 

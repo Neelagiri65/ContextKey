@@ -31,7 +31,7 @@ final class StorageService: ObservableObject {
             throw StorageError.encryptionFailed
         }
 
-        try combined.write(to: profileFileURL)
+        try combined.write(to: profileFileURL, options: .atomic)
         self.profile = profile
         self.hasStoredProfile = true
     }
@@ -67,9 +67,12 @@ final class StorageService: ObservableObject {
     /// Update existing profile with new facts (merge)
     func mergeAndSave(newFacts: [ContextFact], from platform: Platform, stats: ImportRecord) throws {
         var existingProfile: UserContextProfile
-        if let loaded = try? load() {
-            existingProfile = loaded
-        } else {
+        do {
+            existingProfile = try load()
+        } catch {
+            // Any load failure (no profile, corruption, decode error) — start fresh.
+            // The old profile is lost but new facts are saved. Better than failing entirely.
+            print("[Storage] mergeAndSave: load failed (\(error.localizedDescription)), starting fresh profile")
             existingProfile = UserContextProfile()
         }
 
@@ -125,8 +128,12 @@ final class StorageService: ObservableObject {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
 
-        // Delete any existing key first
-        SecItemDelete(query as CFDictionary)
+        // Delete any existing key first (minimal query for deletion)
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: keyTag
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
 
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else {
