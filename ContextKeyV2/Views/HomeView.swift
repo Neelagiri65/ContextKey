@@ -71,6 +71,17 @@ struct HomeView: View {
                             Label("Provider Stats", systemImage: "chart.bar")
                         }
 
+                        #if DEBUG
+                        Divider()
+
+                        Button {
+                            showDevToggle = true
+                        } label: {
+                            let isOn = FeatureFlags.v2EnhancedExtraction
+                            Label("V2 Pipeline: \(isOn ? "ON" : "OFF")", systemImage: isOn ? "bolt.fill" : "bolt.slash")
+                        }
+                        #endif
+
                         Divider()
 
                         Button(role: .destructive) {
@@ -120,10 +131,6 @@ struct HomeView: View {
                 Text(deleteError ?? "Unknown error. Please try again.")
             }
             #if DEBUG
-            .contentShape(Rectangle())
-            .onTapGesture(count: 3) {
-                showDevToggle = true
-            }
             .alert("Developer Toggle", isPresented: $showDevToggle) {
                 Button("Toggle") {
                     let current = UserDefaults.standard.bool(forKey: "v2EnhancedExtraction")
