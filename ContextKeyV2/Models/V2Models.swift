@@ -104,6 +104,7 @@ final class CanonicalEntity {
     var userMergeDecisions: [MergeDecision]
     var facetAssignments: [FacetAssignment]
     @Relationship(deleteRule: .nullify) var beliefScore: BeliefScore?
+    var citationIds: [UUID]
 
     init(
         id: UUID = UUID(),
@@ -115,7 +116,8 @@ final class CanonicalEntity {
         supportingExtractionIds: [UUID] = [],
         userMergeDecisions: [MergeDecision] = [],
         facetAssignments: [FacetAssignment] = [],
-        beliefScore: BeliefScore? = nil
+        beliefScore: BeliefScore? = nil,
+        citationIds: [UUID] = []
     ) {
         self.id = id
         self.canonicalText = canonicalText
@@ -127,6 +129,7 @@ final class CanonicalEntity {
         self.userMergeDecisions = userMergeDecisions
         self.facetAssignments = facetAssignments
         self.beliefScore = beliefScore
+        self.citationIds = citationIds
     }
 }
 
@@ -225,4 +228,43 @@ struct MergeDecision: Codable {
 struct FacetSnapshot: Codable {
     var facetType: FacetType
     var entityIds: [UUID]
+}
+
+// MARK: - CitationReference
+
+/// Tracks URLs and external references found in conversations,
+/// linked to nearby CanonicalEntities for evidence attribution.
+@Model
+final class CitationReference {
+    @Attribute(.unique) var id: UUID
+    var url: String
+    var domain: String              // apple.com, docs.swift.org etc
+    var title: String?              // page title if extractable from text
+    var citedInConversationId: UUID
+    var relatedEntityIds: [UUID]    // CanonicalEntities nearby in the conversation
+    var proximityScore: Double      // how close the citation was to related entities
+    var firstCitedDate: Date
+    var citedCount: Int             // times this URL appeared across all conversations
+
+    init(
+        id: UUID = UUID(),
+        url: String,
+        domain: String,
+        title: String? = nil,
+        citedInConversationId: UUID,
+        relatedEntityIds: [UUID] = [],
+        proximityScore: Double = 0.0,
+        firstCitedDate: Date = Date(),
+        citedCount: Int = 1
+    ) {
+        self.id = id
+        self.url = url
+        self.domain = domain
+        self.title = title
+        self.citedInConversationId = citedInConversationId
+        self.relatedEntityIds = relatedEntityIds
+        self.proximityScore = proximityScore
+        self.firstCitedDate = firstCitedDate
+        self.citedCount = citedCount
+    }
 }

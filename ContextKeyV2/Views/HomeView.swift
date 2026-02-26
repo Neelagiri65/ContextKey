@@ -8,10 +8,19 @@ struct HomeView: View {
     @State private var profile: UserContextProfile?
     @State private var showInput = false
     @State private var showDeleteConfirm = false
+    @State private var showDeleteError = false
+    @State private var deleteError: String?
     @State private var copiedToClipboard = false
     @State private var editingPillar: ContextPillar?
     @State private var showProviderStats = false
     @State private var selectedTab: HomeTab = .cards
+    @StateObject private var noteBuilder = NoteBuilder()
+    @State private var showNoteBuilder = false
+    @State private var copiedFactFeedback: String?
+    @State private var copyFeedbackTask: Task<Void, Never>?
+    #if DEBUG
+    @State private var showDevToggle = false
+    #endif
 
     enum HomeTab: String, CaseIterable {
         case cards = "Cards"
@@ -43,6 +52,18 @@ struct HomeView: View {
                         } label: {
                             Label(copiedToClipboard ? "Copied!" : "Copy Context", systemImage: "doc.on.doc")
                         }
+                        .disabled(profile == nil || profile?.facts.isEmpty == true)
+
+                        if FeatureFlags.noteBuilderEnabled {
+                            Button {
+                                showNoteBuilder = true
+                            } label: {
+                                Label(
+                                    noteBuilder.isEmpty ? "Note Builder" : "Note Builder (\(noteBuilder.items.count))",
+                                    systemImage: "note.text"
+                                )
+                            }
+                        }
 
                         Button {
                             showProviderStats = true
@@ -67,23 +88,53 @@ struct HomeView: View {
                     .onDisappear { loadProfile() }
             }
             .sheet(item: $editingPillar) { pillar in
-                PillarEditView(pillar: pillar, profile: $profile, storageService: storageService)
+                PillarEditView(pillar: pillar, profile: $profile, storageService: storageService, noteBuilder: noteBuilder)
             }
             .sheet(isPresented: $showProviderStats) {
                 if let profile {
                     ProviderStatsView(profile: profile)
                 }
             }
+            .sheet(isPresented: $showNoteBuilder) {
+                NoteBuilderView(noteBuilder: noteBuilder)
+            }
             .alert("Delete All Data?", isPresented: $showDeleteConfirm) {
                 Button("Delete", role: .destructive) {
-                    try? storageService.deleteAll()
-                    profile = nil
-                    UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                    do {
+                        try storageService.deleteAll()
+                        profile = nil
+                        UserDefaults.standard.removeObject(forKey: "userName")
+                        UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                    } catch {
+                        deleteError = "Could not delete data: \(error.localizedDescription)"
+                        showDeleteError = true
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This will permanently erase all your stored context. This cannot be undone.")
             }
+            .alert("Delete Failed", isPresented: $showDeleteError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(deleteError ?? "Unknown error. Please try again.")
+            }
+            #if DEBUG
+            .contentShape(Rectangle())
+            .onTapGesture(count: 3) {
+                showDevToggle = true
+            }
+            .alert("Developer Toggle", isPresented: $showDevToggle) {
+                Button("Toggle") {
+                    let current = UserDefaults.standard.bool(forKey: "v2EnhancedExtraction")
+                    UserDefaults.standard.set(!current, forKey: "v2EnhancedExtraction")
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                let isOn = UserDefaults.standard.bool(forKey: "v2EnhancedExtraction")
+                Text("V2 Extraction is currently \(isOn ? "ON" : "OFF"). Toggle?")
+            }
+            #endif
         }
     }
 
@@ -192,12 +243,23 @@ struct HomeView: View {
     private func pillarCardsSection(_ profile: UserContextProfile) -> some View {
         VStack(spacing: 10) {
             ForEach(ContextPillar.allCases, id: \.self) { pillar in
+                let facts = profile.facts(for: pillar)
                 PillarCardView(
                     pillar: pillar,
-                    facts: profile.facts(for: pillar)
+                    facts: facts
                 )
                 .onTapGesture {
                     editingPillar = pillar
+                }
+                .contextMenu {
+                    if !facts.isEmpty {
+                        Button {
+                            let text = facts.map { "• \($0.content)" }.joined(separator: "\n")
+                            UIPasteboard.general.string = text
+                        } label: {
+                            Label("Copy Facts", systemImage: "doc.on.doc")
+                        }
+                    }
                 }
             }
         }
@@ -271,9 +333,14 @@ struct HomeView: View {
     // MARK: - Actions
 
     private func loadProfile() {
-        if let loaded = try? storageService.load() {
-            profile = loaded
-        } else {
+        do {
+            profile = try storageService.load()
+        } catch StorageService.StorageError.noProfileFound {
+            // No profile yet — start fresh
+            profile = UserContextProfile()
+        } catch {
+            // Decryption or other error — show empty but log
+            print("[HomeView] Failed to load profile: \(error)")
             profile = UserContextProfile()
         }
     }
@@ -282,18 +349,29 @@ struct HomeView: View {
         guard let profile else { return }
         UIPasteboard.general.string = profile.formattedContext()
         copiedToClipboard = true
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            copiedToClipboard = false
-        }
+        scheduleCopyFeedbackReset()
     }
 
     private func launchAIApp(_ platform: Platform) {
-        guard let profile else { return }
+        guard let profile, !profile.facts.isEmpty else { return }
         UIPasteboard.general.string = profile.formattedContext()
         copiedToClipboard = true
-        Task {
+
+        // Open the AI app if URL scheme is supported
+        if let scheme = platform.urlScheme, let url = URL(string: scheme) {
+            if UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+            }
+        }
+
+        scheduleCopyFeedbackReset()
+    }
+
+    private func scheduleCopyFeedbackReset() {
+        copyFeedbackTask?.cancel()
+        copyFeedbackTask = Task {
             try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
             copiedToClipboard = false
         }
     }
@@ -439,10 +517,24 @@ struct EntityGraphView: View {
     ]
 
     var body: some View {
+        let hasFacts = profile.facts.count > 0
         VStack(spacing: 0) {
-            graphCanvas
-            if let selected = selectedNode {
-                nodeDetailPanel(selected)
+            if hasFacts {
+                graphCanvas
+                if let selected = selectedNode {
+                    nodeDetailPanel(selected)
+                }
+            } else {
+                Spacer()
+                VStack(spacing: 12) {
+                    Image(systemName: "circle.grid.cross")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text("Add some context to see your graph")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
             }
         }
         .animation(.smooth, value: selectedNode?.id)
@@ -724,21 +816,18 @@ struct GraphNode: Identifiable {
     let facts: [ContextFact]
 }
 
-struct GraphConnection: Identifiable {
-    let id: String
-    let fromId: String
-    let toId: String
-    let color: Color
-}
-
 // MARK: - Pillar Edit View
 
 struct PillarEditView: View {
     let pillar: ContextPillar
     @Binding var profile: UserContextProfile?
     let storageService: StorageService
+    @ObservedObject var noteBuilder: NoteBuilder
     @Environment(\.dismiss) var dismiss
     @State private var newFactText = ""
+    @State private var saveError: String?
+    @State private var copyFeedback: String?
+    @State private var feedbackTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -752,25 +841,36 @@ struct PillarEditView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Section(header: Text("Facts")) {
-                            ForEach(facts) { fact in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(fact.content)
-                                            .font(.body)
-                                        HStack(spacing: 8) {
-                                            if fact.frequency > 1 {
-                                                Text("Seen \(fact.frequency)x")
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.blue)
-                                            }
-                                            Text("Confidence: \(Int(fact.confidence * 100))%")
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                        }
+                        // Copy All button
+                        Section {
+                            Button {
+                                let text = facts.map { "• \($0.content)" }.joined(separator: "\n")
+                                UIPasteboard.general.string = text
+                                copyFeedback = "Copied \(facts.count) facts"
+                                clearFeedback()
+                            } label: {
+                                Label(
+                                    copyFeedback ?? "Copy All \(pillar.displayName) Facts",
+                                    systemImage: copyFeedback != nil ? "checkmark" : "doc.on.doc"
+                                )
+                            }
+
+                            if FeatureFlags.noteBuilderEnabled {
+                                Button {
+                                    for fact in facts {
+                                        noteBuilder.add(fact.content, pillar: pillar.displayName)
                                     }
-                                    Spacer()
+                                    copyFeedback = "Added \(facts.count) to Note"
+                                    clearFeedback()
+                                } label: {
+                                    Label("Add All to Note", systemImage: "note.text.badge.plus")
                                 }
+                            }
+                        }
+
+                        Section(header: Text("Facts (\(facts.count))")) {
+                            ForEach(facts) { fact in
+                                factRow(fact)
                             }
                             .onDelete { indexSet in
                                 deleteFacts(at: indexSet, from: facts)
@@ -791,6 +891,14 @@ struct PillarEditView: View {
                             .disabled(newFactText.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }
+
+                    if let saveError {
+                        Section {
+                            Text(saveError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
                 }
             }
             .navigationTitle(pillar.displayName)
@@ -803,13 +911,62 @@ struct PillarEditView: View {
         }
     }
 
+    private func factRow(_ fact: ContextFact) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(fact.content)
+                    .font(.body)
+                HStack(spacing: 8) {
+                    if fact.frequency > 1 {
+                        Text("Seen \(fact.frequency)x")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                    }
+                    Text("Confidence: \(Int(fact.confidence * 100))%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = fact.content
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+
+            if FeatureFlags.noteBuilderEnabled {
+                Button {
+                    noteBuilder.add(fact.content, pillar: pillar.displayName)
+                } label: {
+                    Label("Add to Note", systemImage: "note.text.badge.plus")
+                }
+            }
+        }
+    }
+
+    private func clearFeedback() {
+        feedbackTask?.cancel()
+        feedbackTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            copyFeedback = nil
+        }
+    }
+
     private func deleteFacts(at offsets: IndexSet, from facts: [ContextFact]) {
         guard var currentProfile = profile else { return }
         let idsToDelete = offsets.map { facts[$0].id }
         currentProfile.facts.removeAll { idsToDelete.contains($0.id) }
         currentProfile.lastUpdated = Date()
-        try? storageService.save(currentProfile)
-        profile = currentProfile
+        do {
+            try storageService.save(currentProfile)
+            profile = currentProfile
+            saveError = nil
+        } catch {
+            saveError = "Failed to save: \(error.localizedDescription)"
+        }
     }
 
     private func addFact() {
@@ -834,9 +991,14 @@ struct PillarEditView: View {
 
         currentProfile.facts.append(fact)
         currentProfile.lastUpdated = Date()
-        try? storageService.save(currentProfile)
-        profile = currentProfile
-        newFactText = ""
+        do {
+            try storageService.save(currentProfile)
+            profile = currentProfile
+            newFactText = ""
+            saveError = nil
+        } catch {
+            saveError = "Failed to save: \(error.localizedDescription)"
+        }
     }
 }
 
@@ -896,6 +1058,108 @@ struct ProviderStatsView: View {
         case "Good": return .blue
         case "Fair": return .orange
         default: return .gray
+        }
+    }
+}
+
+// MARK: - Note Builder View
+
+struct NoteBuilderView: View {
+    @ObservedObject var noteBuilder: NoteBuilder
+    @Environment(\.dismiss) var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if noteBuilder.isEmpty {
+                    emptyState
+                } else {
+                    noteList
+                }
+            }
+            .navigationTitle("Note Builder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+                if !noteBuilder.isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            UIPasteboard.general.string = noteBuilder.formattedNote
+                            copied = true
+                            Task {
+                                try? await Task.sleep(for: .seconds(1.5))
+                                copied = false
+                            }
+                        } label: {
+                            Label(copied ? "Copied!" : "Copy Note", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "note.text")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("Your note is empty")
+                .font(.headline)
+            Text("Long-press any fact in a pillar card and tap \"Add to Note\" to build a note you can paste into any AI tool.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            Spacer()
+        }
+    }
+
+    private var noteList: some View {
+        List {
+            Section(header: Text("\(noteBuilder.items.count) items")) {
+                ForEach(noteBuilder.items) { item in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.text)
+                            .font(.body)
+                        Text(item.pillar)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .contextMenu {
+                        Button {
+                            UIPasteboard.general.string = item.text
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                    }
+                }
+                .onDelete { offsets in
+                    noteBuilder.remove(at: offsets)
+                }
+                .onMove { source, destination in
+                    noteBuilder.move(from: source, to: destination)
+                }
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    noteBuilder.clear()
+                } label: {
+                    Label("Clear All", systemImage: "trash")
+                }
+            }
+
+            // Preview section
+            Section(header: Text("Preview")) {
+                Text(noteBuilder.formattedNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

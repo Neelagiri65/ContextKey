@@ -173,4 +173,33 @@ enum V2PostProcessor {
 
         return prev[n]
     }
+
+    // MARK: - Step E: Citation Extraction (Stub — Build 18)
+
+    /// Detect URLs in chunk text and create CitationReference objects
+    /// linking them to nearby entities. Full implementation in Build 18.
+    ///
+    /// - Parameters:
+    ///   - chunk: The raw chunk text to scan for URLs.
+    ///   - nearEntities: Extraction candidates from this chunk for proximity matching.
+    /// - Returns: Array of CitationReference objects (currently empty — stub).
+    static func extractCitations(
+        from chunk: String,
+        nearEntities: [RawExtractionCandidate]
+    ) -> [CitationReference] {
+        // Detect https:// URLs in the chunk
+        let pattern = #"https?://[^\s\)\]\>\"']+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return []
+        }
+
+        let nsChunk = chunk as NSString
+        let matches = regex.matches(in: chunk, options: [], range: NSRange(location: 0, length: nsChunk.length))
+
+        // URLs detected — full proximity matching and CitationReference
+        // creation will be implemented in Build 18.
+        _ = matches.map { nsChunk.substring(with: $0.range) }
+
+        return []
+    }
 }
