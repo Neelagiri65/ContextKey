@@ -6,6 +6,13 @@ struct ContextKeyV2App: App {
     @StateObject private var storageService = StorageService()
     @Environment(\.scenePhase) var scenePhase
 
+    init() {
+        #if DEBUG
+        // Enable V2 enhanced extraction in simulator for testing
+        UserDefaults.standard.set(true, forKey: "v2EnhancedExtraction")
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

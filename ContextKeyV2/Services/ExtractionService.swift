@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 // MARK: - Extraction Service
 
@@ -11,6 +12,9 @@ final class ExtractionService: ObservableObject {
     @Published var progress: Double = 0.0       // 0.0 - 1.0
     @Published var statusMessage = ""
     @Published var extractedFacts: [ContextFact] = []
+    @Published var processedConversations = 0
+    @Published var totalConversationsToProcess = 0
+    @Published var rawFactsFound = 0
 
     /// The active SLM engine — user can change this in settings
     @Published var selectedEngine: SLMEngine {
@@ -23,6 +27,12 @@ final class ExtractionService: ObservableObject {
     private var provider: any SLMProvider
     private let fallbackProvider: any SLMProvider = HeuristicProvider()
     @Published var lastError: String?
+
+    /// SwiftData model context for V2 pipeline. Set externally when SwiftData is configured.
+    var modelContext: ModelContext?
+
+    /// The actual provider name (may differ from selectedEngine if fallback was used)
+    var activeProviderName: String { provider.displayName }
 
     init() {
         // Restore user's SLM preference, default to Apple FM if available
@@ -51,6 +61,7 @@ final class ExtractionService: ObservableObject {
         claudeMemory: String? = nil
     ) async throws -> [ContextFact] {
         isProcessing = true
+        defer { isProcessing = false }
         progress = 0.0
         extractedFacts = []
 
@@ -72,23 +83,29 @@ final class ExtractionService: ObservableObject {
             progress = 0.2
         }
 
-        // Step 2: Process conversations in batches
+        // Step 2: Process conversations in batches (limit to 50 most recent)
         let conversations = parseResult.conversations
-        let total = conversations.count
-        statusMessage = "Analyzing \(total) conversations..."
+            .sorted { ($0.createdAt) > ($1.createdAt) }
+        let batch = Array(conversations.prefix(50))
+        let total = batch.count
+        totalConversationsToProcess = total
+        processedConversations = 0
+        rawFactsFound = 0
+        statusMessage = "Analyzing \(total) conversations\(conversations.count > 50 ? " (most recent 50 of \(conversations.count))" : "")..."
 
-        for (index, conversation) in conversations.enumerated() {
-            // Only process conversations with enough content to be meaningful
+        for (index, conversation) in batch.enumerated() {
+            try Task.checkCancellation()
+            // Only process conversations with at least 1 user message
             let userMessages = conversation.messages.filter { $0.role == .user }
-            guard userMessages.count >= 2 else { continue }
+            guard userMessages.count >= 1 else { continue }
 
             // Combine user messages into a single text block for extraction
             let combinedText = userMessages
                 .map { $0.text }
                 .joined(separator: "\n---\n")
 
-            // Truncate to avoid exceeding SLM context window
-            let truncated = String(combinedText.prefix(3000))
+            // Truncate to avoid exceeding SLM context window (6000 chars for Apple FM)
+            let truncated = String(combinedText.prefix(6000))
 
             do {
                 let facts = try await extractFromText(
@@ -97,28 +114,40 @@ final class ExtractionService: ObservableObject {
                     conversationTitle: conversation.title,
                     conversationDate: conversation.createdAt
                 )
-                allFacts.append(contentsOf: facts)
-            } catch {
-                // Primary provider failed — try fallback heuristic provider
-                lastError = "Primary: \(error.localizedDescription)"
-                do {
-                    let fallbackFacts = try await extractWithFallback(
+                if !facts.isEmpty {
+                    allFacts.append(contentsOf: facts)
+                } else {
+                    // Primary returned 0 facts — try fallback (separate catch to avoid double-retry)
+                    let fallbackFacts = try? await extractWithFallback(
                         truncated,
                         platform: parseResult.platform,
                         conversationTitle: conversation.title,
                         conversationDate: conversation.createdAt
                     )
-                    allFacts.append(contentsOf: fallbackFacts)
-                } catch {
-                    // Both providers failed — skip this conversation
-                    continue
+                    if let fb = fallbackFacts {
+                        allFacts.append(contentsOf: fb)
+                    }
+                }
+            } catch {
+                // Primary provider threw — try fallback heuristic provider
+                lastError = "Primary: \(error.localizedDescription)"
+                let fallbackFacts = try? await extractWithFallback(
+                    truncated,
+                    platform: parseResult.platform,
+                    conversationTitle: conversation.title,
+                    conversationDate: conversation.createdAt
+                )
+                if let fb = fallbackFacts {
+                    allFacts.append(contentsOf: fb)
                 }
             }
 
-            // Update progress
+            // Update progress and stats
+            processedConversations = index + 1
+            rawFactsFound = allFacts.count
             let baseProgress = claudeMemory != nil ? 0.2 : 0.0
             progress = baseProgress + (1.0 - baseProgress) * Double(index + 1) / Double(total)
-            statusMessage = "Analyzed \(index + 1) of \(total) conversations..."
+            statusMessage = "Analyzed \(index + 1)/\(total) — \(allFacts.count) facts found"
         }
 
         // Step 3: Deduplicate and merge
@@ -126,7 +155,6 @@ final class ExtractionService: ObservableObject {
         let deduped = deduplicateAndMerge(allFacts)
 
         extractedFacts = deduped
-        isProcessing = false
         progress = 1.0
         statusMessage = "Done — found \(deduped.count) context items"
 
@@ -136,22 +164,35 @@ final class ExtractionService: ObservableObject {
     /// Extract context from a single text input (voice transcript or manual entry)
     func extractFromSingleInput(_ text: String, source: Platform = .manual) async throws -> [ContextFact] {
         isProcessing = true
+        defer { isProcessing = false }
         statusMessage = "Analyzing your input..."
 
         var facts: [ContextFact]
+        let truncated = String(text.prefix(6000))
+        try Task.checkCancellation()
         do {
             facts = try await extractFromText(
-                String(text.prefix(3000)),
+                truncated,
                 platform: source,
                 conversationTitle: "Direct input",
                 conversationDate: Date()
             )
+            // If primary returned 0 facts, try fallback — empty success is still a failure
+            if facts.isEmpty {
+                statusMessage = "Primary returned nothing, trying backup..."
+                facts = try await extractWithFallback(
+                    truncated,
+                    platform: source,
+                    conversationTitle: "Direct input",
+                    conversationDate: Date()
+                )
+            }
         } catch {
             // Primary failed, try fallback
-            lastError = "Primary: \(error.localizedDescription)"
+            lastError = "Primary (\(selectedEngine.displayName)): \(error.localizedDescription)"
             statusMessage = "Using backup extraction..."
             facts = try await extractWithFallback(
-                String(text.prefix(3000)),
+                truncated,
                 platform: source,
                 conversationTitle: "Direct input",
                 conversationDate: Date()
@@ -160,7 +201,6 @@ final class ExtractionService: ObservableObject {
 
         let deduped = deduplicateAndMerge(facts)
         extractedFacts = deduped
-        isProcessing = false
         statusMessage = "Found \(deduped.count) context items"
 
         return deduped
@@ -174,6 +214,17 @@ final class ExtractionService: ObservableObject {
         conversationTitle: String,
         conversationDate: Date
     ) async throws -> [ContextFact] {
+        // V2 pipeline gate — when enabled, runs the full V2 extraction path
+        if FeatureFlags.v2EnhancedExtraction {
+            return try await extractV2(
+                from: text,
+                platform: platform,
+                conversationTitle: conversationTitle,
+                conversationDate: conversationDate
+            )
+        }
+
+        // --- Existing v1 extraction path (unchanged below) ---
         let prompt = """
         Analyze the following conversation messages from a user. Extract factual information \
         about the user organized into these categories:
@@ -249,6 +300,158 @@ final class ExtractionService: ObservableObject {
         )
 
         return convertToFacts(extracted, source: source)
+    }
+
+    // MARK: - V2 Pipeline
+
+    /// Full V2 extraction: PreProcessor → SLMCaller → PostProcessor → SwiftData save.
+    /// Returns [ContextFact] for backward compatibility with existing UI.
+    private func extractV2(
+        from text: String,
+        platform: Platform,
+        conversationTitle: String,
+        conversationDate: Date
+    ) async throws -> [ContextFact] {
+        // Step 1: Pre-process
+        let preProcessed = ConversationPreProcessor.process(text)
+        let conversationTimestamp = preProcessed.estimatedDate ?? conversationDate
+        let sourceConversationId = UUID()
+
+        // Step 2: Run SLM on each chunk (or NLTagger fallback)
+        var chunkResults: [(chunkId: String, chunkText: String, candidates: [RawExtractionCandidate])] = []
+
+        for (index, chunk) in preProcessed.chunks.enumerated() {
+            let chunkId = "chunk_\(index)"
+            var candidates: [RawExtractionCandidate] = []
+
+            // Try V2SLMCaller first
+            if let caller = createV2SLMCaller() {
+                do {
+                    candidates = try await caller.call(
+                        chunk: chunk,
+                        primingTopics: preProcessed.primingTopics
+                    )
+                } catch let error as SLMError where error == .timeout {
+                    // Timeout — skip chunk, continue
+                    print("[V2] Chunk \(index) timed out, skipping")
+                    continue
+                } catch {
+                    // Model unavailable or other error — fall back to NLTagger
+                    candidates = nlTaggerFallback(
+                        chunk: chunk,
+                        primingTopics: preProcessed.primingTopics
+                    )
+                }
+            } else {
+                // No SLM available — NLTagger fallback
+                candidates = nlTaggerFallback(
+                    chunk: chunk,
+                    primingTopics: preProcessed.primingTopics
+                )
+            }
+
+            chunkResults.append((chunkId: chunkId, chunkText: chunk, candidates: candidates))
+        }
+
+        // Step 3: Post-process
+        let rawExtractions = V2PostProcessor.process(
+            chunks: chunkResults,
+            sourceConversationId: sourceConversationId,
+            conversationTimestamp: conversationTimestamp
+        )
+
+        // Step 4: Save to SwiftData
+        if let context = modelContext {
+            for extraction in rawExtractions {
+                context.insert(extraction)
+            }
+            try? context.save()
+        }
+
+        // Step 5: Reconciliation (stub — Build 18)
+        ReconciliationService.reconcile(extractions: rawExtractions)
+
+        // Convert to ContextFact for backward compatibility with existing UI
+        let source = ContextSource(
+            platform: platform,
+            conversationCount: 1,
+            lastConversationDate: conversationDate
+        )
+        return rawExtractions.filter { $0.isActive }.map { extraction in
+            ContextFact(
+                content: extraction.text,
+                layer: v2EntityTypeToLayer(extraction.entityType),
+                pillar: v2EntityTypeToPillar(extraction.entityType),
+                confidence: extraction.rawConfidence,
+                sources: [source]
+            )
+        }
+    }
+
+    /// Create a V2SLMCaller with the appropriate session for the current device.
+    private func createV2SLMCaller() -> V2SLMCaller? {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            return V2SLMCaller(session: AppleLanguageModelSession())
+        }
+        #endif
+        return nil
+    }
+
+    /// NLTagger fallback (Section 2.5 basic): converts priming topics to candidates.
+    /// Used when the SLM is unavailable.
+    private func nlTaggerFallback(
+        chunk: String,
+        primingTopics: [String]
+    ) -> [RawExtractionCandidate] {
+        // Use priming topics as basic entity candidates
+        var candidates = primingTopics.map { topic in
+            RawExtractionCandidate(
+                text: topic,
+                entityType: .context,
+                speakerAttribution: .ambiguous,
+                confidence: 0.3
+            )
+        }
+
+        // Also run NLTagger on this specific chunk for additional entities
+        let chunkTopics = ConversationPreProcessor.extractPrimingTopics(chunk)
+        for topic in chunkTopics where !primingTopics.contains(topic) {
+            candidates.append(RawExtractionCandidate(
+                text: topic,
+                entityType: .context,
+                speakerAttribution: .ambiguous,
+                confidence: 0.2
+            ))
+        }
+
+        return candidates
+    }
+
+    /// Map V2 EntityType to v1 ContextLayer for backward compatibility.
+    private func v2EntityTypeToLayer(_ entityType: EntityType) -> ContextLayer {
+        switch entityType {
+        case .identity, .skill, .tool, .domain, .preference:
+            return .coreIdentity
+        case .project, .goal:
+            return .currentContext
+        case .context:
+            return .activeContext
+        }
+    }
+
+    /// Map V2 EntityType to v1 ContextPillar for backward compatibility.
+    private func v2EntityTypeToPillar(_ entityType: EntityType) -> ContextPillar {
+        switch entityType {
+        case .identity:   return .persona
+        case .skill:      return .skillsAndStack
+        case .tool:       return .skillsAndStack
+        case .project:    return .activeProjects
+        case .goal:       return .goalsAndPriorities
+        case .preference: return .communicationStyle
+        case .context:    return .workPatterns
+        case .domain:     return .persona
+        }
     }
 
     // MARK: - Private: Convert & Deduplicate
