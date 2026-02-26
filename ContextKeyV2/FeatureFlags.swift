@@ -13,12 +13,9 @@ struct FeatureFlags {
 
     /// V2 enhanced extraction pipeline (Section 2.3+). When false, V2SLMCaller.call()
     /// throws modelUnavailable and the existing v1 extraction path runs unchanged.
-    /// In DEBUG builds, can be overridden at runtime via UserDefaults.
+    /// Default is false (UserDefaults.bool returns false for unset keys).
+    /// Togglable at runtime via the menu in HomeView.
     static var v2EnhancedExtraction: Bool {
-        #if DEBUG
-        return UserDefaults.standard.bool(forKey: "v2EnhancedExtraction")
-        #else
-        return false
-        #endif
+        UserDefaults.standard.bool(forKey: "v2EnhancedExtraction")
     }
 }

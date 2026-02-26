@@ -18,9 +18,7 @@ struct HomeView: View {
     @State private var showNoteBuilder = false
     @State private var copiedFactFeedback: String?
     @State private var copyFeedbackTask: Task<Void, Never>?
-    #if DEBUG
     @State private var showDevToggle = false
-    #endif
 
     enum HomeTab: String, CaseIterable {
         case cards = "Cards"
@@ -71,7 +69,6 @@ struct HomeView: View {
                             Label("Provider Stats", systemImage: "chart.bar")
                         }
 
-                        #if DEBUG
                         Divider()
 
                         Button {
@@ -80,7 +77,6 @@ struct HomeView: View {
                             let isOn = FeatureFlags.v2EnhancedExtraction
                             Label("V2 Pipeline: \(isOn ? "ON" : "OFF")", systemImage: isOn ? "bolt.fill" : "bolt.slash")
                         }
-                        #endif
 
                         Divider()
 
@@ -130,7 +126,6 @@ struct HomeView: View {
             } message: {
                 Text(deleteError ?? "Unknown error. Please try again.")
             }
-            #if DEBUG
             .alert("Developer Toggle", isPresented: $showDevToggle) {
                 Button("Toggle") {
                     let current = UserDefaults.standard.bool(forKey: "v2EnhancedExtraction")
@@ -141,7 +136,6 @@ struct HomeView: View {
                 let isOn = UserDefaults.standard.bool(forKey: "v2EnhancedExtraction")
                 Text("V2 Extraction is currently \(isOn ? "ON" : "OFF"). Toggle?")
             }
-            #endif
         }
     }
 
