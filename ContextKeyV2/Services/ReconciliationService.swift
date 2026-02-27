@@ -30,9 +30,7 @@ enum ReconciliationService {
     static func reconcileEntities(extractions: [RawExtraction], modelContext: ModelContext) async throws {
         // Process in batches of 50 — never load all CanonicalEntities at once
         for batch in extractions.chunked(into: batchSize) {
-            let entityTexts = Set(batch.map { $0.text.lowercased().trimmingCharacters(in: .whitespaces) })
-
-            // Fetch only entities relevant to this batch
+            // Fetch entities relevant to this batch
             let descriptor = FetchDescriptor<CanonicalEntity>()
             let existingEntities = try modelContext.fetch(descriptor)
 
