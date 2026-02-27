@@ -12,6 +12,7 @@ enum EntityType: String, Codable, CaseIterable {
     case identity      // iOS developer, Strategic Account Executive
     case context       // Currently debugging crash in Build 16, job searching
     case domain        // Enterprise software, fintech, developer tools
+    case company       // A specific organisation — employer, client, partner, or competitor
 }
 
 /// How the fact was attributed to the user

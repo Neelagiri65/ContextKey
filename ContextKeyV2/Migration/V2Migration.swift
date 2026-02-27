@@ -33,6 +33,7 @@ func mapEntityTypeToFacet(_ entityType: EntityType, sourcePillar: ContextPillar?
     case .identity:    return FacetAssignment(facetType: .professionalIdentity, relevanceWeight: 1.0, isPrimary: true)
     case .context:     return FacetAssignment(facetType: .currentContext, relevanceWeight: 1.0, isPrimary: true)
     case .domain:      return FacetAssignment(facetType: .domainKnowledge, relevanceWeight: 1.0, isPrimary: true)
+    case .company:     return FacetAssignment(facetType: .professionalIdentity, relevanceWeight: 0.8, isPrimary: true)
     }
 }
 
@@ -47,6 +48,7 @@ func halfLifeDays(for entityType: EntityType) -> Double {
     case .preference: return 365.0
     case .context:    return 14.0
     case .domain:     return 365.0
+    case .company:    return 365.0
     }
 }
 

@@ -1,28 +1,76 @@
 import SwiftUI
+import SwiftData
 
 // MARK: - Content View (Router)
 
 struct ContentView: View {
     @EnvironmentObject var biometricService: BiometricService
     @EnvironmentObject var storageService: StorageService
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @State private var isMigrating = false
 
     var body: some View {
-        Group {
-            if !hasCompletedOnboarding {
-                OnboardingView {
-                    // After onboarding, unlock immediately — no double FaceID
-                    biometricService.unlockWithoutAuth()
-                    hasCompletedOnboarding = true
+        ZStack {
+            Group {
+                if !hasCompletedOnboarding {
+                    OnboardingView {
+                        // After onboarding, unlock immediately — no double FaceID
+                        biometricService.unlockWithoutAuth()
+                        hasCompletedOnboarding = true
+                    }
+                } else if biometricService.isLocked {
+                    LockScreen()
+                } else {
+                    HomeView()
                 }
-            } else if biometricService.isLocked {
-                LockScreen()
-            } else {
-                HomeView()
+            }
+            .animation(.smooth, value: biometricService.isLocked)
+            .animation(.smooth, value: hasCompletedOnboarding)
+
+            if isMigrating {
+                MigrationOverlay()
             }
         }
-        .animation(.smooth, value: biometricService.isLocked)
-        .animation(.smooth, value: hasCompletedOnboarding)
+        .task {
+            await runMigrationIfNeeded()
+        }
+    }
+
+    private func runMigrationIfNeeded() async {
+        guard !UserDefaults.standard.bool(forKey: "hasRunV2Migration") else { return }
+        guard storageService.hasStoredProfile else { return }
+
+        isMigrating = true
+        defer { isMigrating = false }
+
+        do {
+            let profile = try storageService.load()
+            try runV2Migration(existingFacts: profile.facts, modelContext: modelContext)
+        } catch {
+            // Migration failure is non-fatal — old data preserved in encrypted storage
+            print("[V2Migration] Failed: \(error). Old data preserved.")
+        }
+    }
+}
+
+// MARK: - Migration Overlay
+
+private struct MigrationOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Upgrading your profile...")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+            }
+            .padding(32)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        }
     }
 }
 

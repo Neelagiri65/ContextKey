@@ -105,6 +105,8 @@ final class CanonicalEntity {
     var facetAssignments: [FacetAssignment]
     @Relationship(deleteRule: .nullify) var beliefScore: BeliefScore?
     var citationIds: [UUID]
+    var pendingAliasCandidates: [PendingAliasCandidate]
+    var hasMergeConflict: Bool
 
     init(
         id: UUID = UUID(),
@@ -117,7 +119,9 @@ final class CanonicalEntity {
         userMergeDecisions: [MergeDecision] = [],
         facetAssignments: [FacetAssignment] = [],
         beliefScore: BeliefScore? = nil,
-        citationIds: [UUID] = []
+        citationIds: [UUID] = [],
+        pendingAliasCandidates: [PendingAliasCandidate] = [],
+        hasMergeConflict: Bool = false
     ) {
         self.id = id
         self.canonicalText = canonicalText
@@ -130,6 +134,8 @@ final class CanonicalEntity {
         self.facetAssignments = facetAssignments
         self.beliefScore = beliefScore
         self.citationIds = citationIds
+        self.pendingAliasCandidates = pendingAliasCandidates
+        self.hasMergeConflict = hasMergeConflict
     }
 }
 
@@ -148,6 +154,7 @@ final class BeliefScore {
     var userFeedbackDelta: Double
     var halfLifeDays: Double
     var stabilityFloorActive: Bool
+    var externalCorroboration: Double
 
     init(
         id: UUID = UUID(),
@@ -159,7 +166,8 @@ final class BeliefScore {
         attributionWeight: Double = 1.0,
         userFeedbackDelta: Double = 0.0,
         halfLifeDays: Double = 365.0,
-        stabilityFloorActive: Bool = false
+        stabilityFloorActive: Bool = false,
+        externalCorroboration: Double = 0.0
     ) {
         self.id = id
         self.canonicalEntityId = canonicalEntityId
@@ -171,6 +179,7 @@ final class BeliefScore {
         self.userFeedbackDelta = userFeedbackDelta
         self.halfLifeDays = halfLifeDays
         self.stabilityFloorActive = stabilityFloorActive
+        self.externalCorroboration = externalCorroboration
     }
 }
 
@@ -228,6 +237,14 @@ struct MergeDecision: Codable {
 struct FacetSnapshot: Codable {
     var facetType: FacetType
     var entityIds: [UUID]
+}
+
+/// A Tier B merge candidate awaiting auto-promotion to alias.
+struct PendingAliasCandidate: Codable {
+    var extractionId: UUID
+    var candidateEntityId: UUID
+    var coOccurrenceCount: Int
+    var firstSeen: Date
 }
 
 // MARK: - CitationReference

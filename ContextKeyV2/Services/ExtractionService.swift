@@ -368,8 +368,10 @@ final class ExtractionService: ObservableObject {
             try? context.save()
         }
 
-        // Step 5: Reconciliation (stub — Build 18)
-        ReconciliationService.reconcile(extractions: rawExtractions)
+        // Step 5: Reconciliation
+        if let context = modelContext {
+            try? await ReconciliationService.reconcile(extractions: rawExtractions, modelContext: context)
+        }
 
         // Convert to ContextFact for backward compatibility with existing UI
         let source = ContextSource(
@@ -431,7 +433,7 @@ final class ExtractionService: ObservableObject {
     /// Map V2 EntityType to v1 ContextLayer for backward compatibility.
     private func v2EntityTypeToLayer(_ entityType: EntityType) -> ContextLayer {
         switch entityType {
-        case .identity, .skill, .tool, .domain, .preference:
+        case .identity, .skill, .tool, .domain, .preference, .company:
             return .coreIdentity
         case .project, .goal:
             return .currentContext
@@ -451,6 +453,7 @@ final class ExtractionService: ObservableObject {
         case .preference: return .communicationStyle
         case .context:    return .workPatterns
         case .domain:     return .persona
+        case .company:    return .persona
         }
     }
 
