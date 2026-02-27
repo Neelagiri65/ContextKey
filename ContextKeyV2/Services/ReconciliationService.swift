@@ -36,18 +36,6 @@ enum ReconciliationService {
             let descriptor = FetchDescriptor<CanonicalEntity>()
             let existingEntities = try modelContext.fetch(descriptor)
 
-            // Filter to entities whose text or aliases overlap with this batch
-            let relevantEntities = existingEntities.filter { entity in
-                let canonical = entity.canonicalText.lowercased()
-                if entityTexts.contains(canonical) { return true }
-                return entity.aliases.contains { entityTexts.contains($0.lowercased()) }
-            }
-            // Also keep entities from the same conversations for Tier B
-            let conversationIds = Set(batch.map { $0.sourceConversationId })
-            let conversationEntities = existingEntities.filter { entity in
-                !relevantEntities.contains(where: { $0.id == entity.id })
-            }
-
             for extraction in batch {
                 // Tier A: Exact match
                 if let match = tierAMatch(extractionText: extraction.text, existingEntities: existingEntities) {
@@ -337,33 +325,15 @@ enum ReconciliationService {
 
     @MainActor
     static func reconcileCitations(from extractions: [RawExtraction], modelContext: ModelContext) async throws {
-        // Group extractions by conversation for citation extraction
-        let byConversation = Dictionary(grouping: extractions, by: { $0.sourceConversationId })
-
-        for (conversationId, convExtractions) in byConversation {
-            // Build RawExtractionCandidate proxies for proximity matching
-            let candidates = convExtractions.map { extraction in
-                RawExtractionCandidate(
-                    text: extraction.text,
-                    entityType: extraction.entityType,
-                    speakerAttribution: extraction.speakerAttribution,
-                    confidence: extraction.rawConfidence
-                )
-            }
-
-            // Extract citations from each extraction's source chunk
-            let chunkTexts = Set(convExtractions.map { $0.sourceChunkId })
-            // We don't have the raw chunk text here — citation extraction should happen
-            // in the pipeline before reconciliation, in V2PostProcessor.
-            // For reconciliation, we handle citation deduplication only.
-        }
+        // Citation extraction happens in V2PostProcessor during the pipeline.
+        // Here we handle deduplication and corroboration boost only.
 
         // Deduplicate citations: same URL across conversations → increment citedCount
         let citationDescriptor = FetchDescriptor<CitationReference>()
         let existingCitations = try modelContext.fetch(citationDescriptor)
 
         let citationsByURL = Dictionary(grouping: existingCitations, by: { $0.url })
-        for (url, citations) in citationsByURL where citations.count > 1 {
+        for (_, citations) in citationsByURL where citations.count > 1 {
             // Keep the first, merge others into it
             let primary = citations[0]
             for duplicate in citations.dropFirst() {
