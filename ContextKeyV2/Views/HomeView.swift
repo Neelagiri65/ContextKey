@@ -182,9 +182,12 @@ struct HomeView: View {
                 // Pillar cards — full-width list
                 pillarCardsSection(profile)
 
-                // V2 Entities — sorted by belief score, filtered by visibility
-                if !visibleSortedEntities.isEmpty {
-                    v2EntitiesSection
+                // V2 Facets — grouped by facet, sorted by belief score
+                facetCardsSection
+
+                // Empty facet prompts
+                if !emptyFacetsList.isEmpty {
+                    emptyFacetsPromptSection
                 }
 
                 // AI App quick-launch
@@ -342,50 +345,74 @@ struct HomeView: View {
         .padding(.horizontal)
     }
 
-    // MARK: - V2 Entity Filtering
+    // MARK: - V2 Facet Sections
 
-    private var visibleSortedEntities: [CanonicalEntity] {
-        BeliefEngine.sortedByScore(
-            BeliefEngine.visibleEntities(from: allEntities)
-        )
+    private var visibleFacetMap: [FacetType: [CanonicalEntity]] {
+        FacetService.visibleFacets(from: allEntities)
     }
 
-    // MARK: - V2 Entities Section
+    private var emptyFacetsList: [FacetType] {
+        FacetService.emptyFacets(from: allEntities)
+    }
 
-    private var v2EntitiesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Identity Graph")
-                .font(.subheadline.bold())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 4)
+    private var facetCardsSection: some View {
+        let facets = visibleFacetMap
+        return VStack(spacing: 10) {
+            ForEach(FacetType.allCases, id: \.self) { facetType in
+                if let entities = facets[facetType] {
+                    facetCard(facetType, entities: entities)
+                }
+            }
+        }
+        .padding(.horizontal)
+    }
 
-            ForEach(visibleSortedEntities) { entity in
-                HStack(spacing: 10) {
-                    Image(systemName: iconForEntityType(entity.entityType))
+    private func facetCard(_ facet: FacetType, entities: [CanonicalEntity]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: iconForFacet(facet))
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(colorForFacet(facet))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+
+                Text(FacetService.displayName(for: facet))
+                    .font(.subheadline.bold())
+
+                Spacer()
+
+                Text("\(entities.count)")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(colorForFacet(facet))
+                    .clipShape(Capsule())
+            }
+
+            ForEach(entities.prefix(4)) { entity in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(colorForFacet(facet).opacity(0.5))
+                        .frame(width: 5, height: 5)
+                    Text(entity.canonicalText)
                         .font(.caption)
-                        .foregroundStyle(.white)
-                        .frame(width: 24, height: 24)
-                        .background(colorForEntityType(entity.entityType))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entity.canonicalText)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                        Text(entity.entityType.rawValue.capitalized)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
                     Spacer()
-
                     if let score = entity.beliefScore {
                         Text("\(Int(score.currentScore * 100))%")
-                            .font(.caption2.bold())
-                            .foregroundStyle(score.currentScore >= 0.7 ? .green : .orange)
+                            .font(.system(size: 9).bold())
+                            .foregroundStyle(colorForFacet(facet))
                     }
                 }
-                .padding(.vertical, 4)
+            }
+            if entities.count > 4 {
+                Text("+\(entities.count - 4) more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 11)
             }
         }
         .padding(14)
@@ -396,36 +423,55 @@ struct HomeView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+                .stroke(colorForFacet(facet).opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private var emptyFacetsPromptSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Enrich your profile")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+
+            ForEach(emptyFacetsList.prefix(3), id: \.self) { facet in
+                Text(FacetService.prompt(for: facet))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 4)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(.systemGray6))
         )
         .padding(.horizontal)
     }
 
-    private func iconForEntityType(_ type: EntityType) -> String {
-        switch type {
-        case .identity: return "person.fill"
-        case .skill: return "hammer.fill"
-        case .tool: return "wrench.and.screwdriver.fill"
-        case .project: return "folder.fill"
-        case .goal: return "target"
-        case .preference: return "slider.horizontal.3"
-        case .context: return "clock.fill"
-        case .domain: return "globe"
-        case .company: return "building.2.fill"
+    private func iconForFacet(_ facet: FacetType) -> String {
+        switch facet {
+        case .professionalIdentity: return "person.fill"
+        case .technicalCapability:  return "hammer.fill"
+        case .activeProjects:       return "folder.fill"
+        case .goalsMotivations:     return "target"
+        case .workingStyle:         return "slider.horizontal.3"
+        case .valuesConstraints:    return "shield.fill"
+        case .domainKnowledge:      return "globe"
+        case .currentContext:       return "clock.fill"
         }
     }
 
-    private func colorForEntityType(_ type: EntityType) -> Color {
-        switch type {
-        case .identity: return .blue
-        case .skill: return .purple
-        case .tool: return .indigo
-        case .project: return .orange
-        case .goal: return .red
-        case .preference: return .green
-        case .context: return .teal
-        case .domain: return .brown
-        case .company: return .gray
+    private func colorForFacet(_ facet: FacetType) -> Color {
+        switch facet {
+        case .professionalIdentity: return .blue
+        case .technicalCapability:  return .purple
+        case .activeProjects:       return .orange
+        case .goalsMotivations:     return .red
+        case .workingStyle:         return .green
+        case .valuesConstraints:    return .gray
+        case .domainKnowledge:      return .brown
+        case .currentContext:       return .teal
         }
     }
 
