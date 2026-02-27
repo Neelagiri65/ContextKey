@@ -43,6 +43,15 @@ struct ContextKeyV2App: App {
                        storageService.hasStoredProfile {
                         biometricService.lock()
                     }
+                    // Decay pass on foreground if >24h since last run
+                    if newPhase == .active {
+                        let context = modelContainer.mainContext
+                        do {
+                            try BeliefEngine.decayPassIfNeeded(modelContext: context)
+                        } catch {
+                            print("[BeliefEngine] Decay pass failed: \(error)")
+                        }
+                    }
                 }
         }
     }

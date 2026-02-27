@@ -1,10 +1,13 @@
 import SwiftUI
+import SwiftData
 
 // MARK: - Home View
 
 struct HomeView: View {
     @EnvironmentObject var storageService: StorageService
     @EnvironmentObject var biometricService: BiometricService
+    @Environment(\.modelContext) private var modelContext
+    @Query private var allEntities: [CanonicalEntity]
     @State private var profile: UserContextProfile?
     @State private var showInput = false
     @State private var showDeleteConfirm = false
@@ -179,6 +182,11 @@ struct HomeView: View {
                 // Pillar cards — full-width list
                 pillarCardsSection(profile)
 
+                // V2 Entities — sorted by belief score, filtered by visibility
+                if !visibleSortedEntities.isEmpty {
+                    v2EntitiesSection
+                }
+
                 // AI App quick-launch
                 aiAppBar
 
@@ -257,6 +265,9 @@ struct HomeView: View {
                         Button {
                             let text = facts.map { "• \($0.content)" }.joined(separator: "\n")
                             UIPasteboard.general.string = text
+                            for fact in facts {
+                                BeliefEngine.applyFeedbackByText(signal: .copiedFact, factText: fact.content, modelContext: modelContext)
+                            }
                         } label: {
                             Label("Copy Facts", systemImage: "doc.on.doc")
                         }
@@ -331,6 +342,93 @@ struct HomeView: View {
         .padding(.horizontal)
     }
 
+    // MARK: - V2 Entity Filtering
+
+    private var visibleSortedEntities: [CanonicalEntity] {
+        BeliefEngine.sortedByScore(
+            BeliefEngine.visibleEntities(from: allEntities)
+        )
+    }
+
+    // MARK: - V2 Entities Section
+
+    private var v2EntitiesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Identity Graph")
+                .font(.subheadline.bold())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+
+            ForEach(visibleSortedEntities) { entity in
+                HStack(spacing: 10) {
+                    Image(systemName: iconForEntityType(entity.entityType))
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .frame(width: 24, height: 24)
+                        .background(colorForEntityType(entity.entityType))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entity.canonicalText)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Text(entity.entityType.rawValue.capitalized)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    if let score = entity.beliefScore {
+                        Text("\(Int(score.currentScore * 100))%")
+                            .font(.caption2.bold())
+                            .foregroundStyle(score.currentScore >= 0.7 ? .green : .orange)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color(.systemGray5), lineWidth: 1)
+        )
+        .padding(.horizontal)
+    }
+
+    private func iconForEntityType(_ type: EntityType) -> String {
+        switch type {
+        case .identity: return "person.fill"
+        case .skill: return "hammer.fill"
+        case .tool: return "wrench.and.screwdriver.fill"
+        case .project: return "folder.fill"
+        case .goal: return "target"
+        case .preference: return "slider.horizontal.3"
+        case .context: return "clock.fill"
+        case .domain: return "globe"
+        case .company: return "building.2.fill"
+        }
+    }
+
+    private func colorForEntityType(_ type: EntityType) -> Color {
+        switch type {
+        case .identity: return .blue
+        case .skill: return .purple
+        case .tool: return .indigo
+        case .project: return .orange
+        case .goal: return .red
+        case .preference: return .green
+        case .context: return .teal
+        case .domain: return .brown
+        case .company: return .gray
+        }
+    }
+
     // MARK: - Actions
 
     private func loadProfile() {
@@ -349,6 +447,7 @@ struct HomeView: View {
     private func copyContext() {
         guard let profile else { return }
         UIPasteboard.general.string = profile.formattedContext()
+        BeliefEngine.applyContextCardCopiedToAll(modelContext: modelContext)
         copiedToClipboard = true
         scheduleCopyFeedbackReset()
     }
@@ -356,6 +455,7 @@ struct HomeView: View {
     private func launchAIApp(_ platform: Platform) {
         guard let profile, !profile.facts.isEmpty else { return }
         UIPasteboard.general.string = profile.formattedContext()
+        BeliefEngine.applyContextCardCopiedToAll(modelContext: modelContext)
         copiedToClipboard = true
 
         // Open the AI app if URL scheme is supported
@@ -825,6 +925,7 @@ struct PillarEditView: View {
     let storageService: StorageService
     @ObservedObject var noteBuilder: NoteBuilder
     @Environment(\.dismiss) var dismiss
+    @Environment(\.modelContext) private var modelContext
     @State private var newFactText = ""
     @State private var saveError: String?
     @State private var copyFeedback: String?
@@ -847,6 +948,9 @@ struct PillarEditView: View {
                             Button {
                                 let text = facts.map { "• \($0.content)" }.joined(separator: "\n")
                                 UIPasteboard.general.string = text
+                                for fact in facts {
+                                    BeliefEngine.applyFeedbackByText(signal: .copiedFact, factText: fact.content, modelContext: modelContext)
+                                }
                                 copyFeedback = "Copied \(facts.count) facts"
                                 clearFeedback()
                             } label: {
@@ -933,6 +1037,7 @@ struct PillarEditView: View {
         .contextMenu {
             Button {
                 UIPasteboard.general.string = fact.content
+                BeliefEngine.applyFeedbackByText(signal: .copiedFact, factText: fact.content, modelContext: modelContext)
             } label: {
                 Label("Copy", systemImage: "doc.on.doc")
             }
@@ -958,6 +1063,9 @@ struct PillarEditView: View {
 
     private func deleteFacts(at offsets: IndexSet, from facts: [ContextFact]) {
         guard var currentProfile = profile else { return }
+        for offset in offsets {
+            BeliefEngine.applyFeedbackByText(signal: .explicitDismiss, factText: facts[offset].content, modelContext: modelContext)
+        }
         let idsToDelete = offsets.map { facts[$0].id }
         currentProfile.facts.removeAll { idsToDelete.contains($0.id) }
         currentProfile.lastUpdated = Date()

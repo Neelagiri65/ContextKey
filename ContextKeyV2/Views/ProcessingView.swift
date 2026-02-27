@@ -5,6 +5,7 @@ import SwiftUI
 struct ProcessingView: View {
     @EnvironmentObject var storageService: StorageService
     @Environment(\.dismiss) var dismiss
+    @Environment(\.modelContext) private var modelContext
     @StateObject private var extractionService = ExtractionService()
 
     let parseResult: ParseResult?
@@ -269,6 +270,9 @@ struct ProcessingView: View {
     private func deleteFacts(in pillar: ContextPillar, at offsets: IndexSet) {
         let pillarFacts = editableFacts.filter { $0.pillar == pillar }
         let idsToRemove = offsets.map { pillarFacts[$0].id }
+        for offset in offsets {
+            BeliefEngine.applyFeedbackByText(signal: .explicitDismiss, factText: pillarFacts[offset].content, modelContext: modelContext)
+        }
         editableFacts.removeAll { idsToRemove.contains($0.id) }
     }
 
@@ -288,6 +292,7 @@ struct ProcessingView: View {
                 from: platform,
                 stats: stats
             )
+            BeliefEngine.applyContextCardCopiedToAll(modelContext: modelContext)
             dismiss()
         } catch {
             showSaveError = "Save failed: \(error.localizedDescription)"
