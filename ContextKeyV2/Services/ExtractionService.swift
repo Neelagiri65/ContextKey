@@ -371,6 +371,16 @@ final class ExtractionService: ObservableObject {
         // Step 5: Reconciliation
         if let context = modelContext {
             try? await ReconciliationService.reconcile(extractions: rawExtractions, modelContext: context)
+
+            // Step 6: Recalculate belief scores for affected entities
+            let affectedEntityIds = Set(rawExtractions.compactMap { $0.canonicalEntityId })
+            if !affectedEntityIds.isEmpty {
+                let descriptor = FetchDescriptor<CanonicalEntity>()
+                if let allEntities = try? context.fetch(descriptor) {
+                    let affected = allEntities.filter { affectedEntityIds.contains($0.id) }
+                    BeliefEngine.recalculateAffected(entities: affected)
+                }
+            }
         }
 
         // Convert to ContextFact for backward compatibility with existing UI
