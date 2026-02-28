@@ -15,19 +15,33 @@ struct ContextKeyV2App: App {
         UserDefaults.standard.set(true, forKey: "v2EnhancedExtraction")
         #endif
 
+        let schema = Schema([
+            RawExtraction.self,
+            ImportedConversation.self,
+            CanonicalEntity.self,
+            BeliefScore.self,
+            ContextCard.self,
+            CitationReference.self
+        ])
+        let config = ModelConfiguration(isStoredInMemoryOnly: false)
+
+        // Tier 1 — try normal init (handles lightweight migrations)
         do {
-            let schema = Schema([
-                RawExtraction.self,
-                ImportedConversation.self,
-                CanonicalEntity.self,
-                BeliefScore.self,
-                ContextCard.self,
-                CitationReference.self
-            ])
-            let config = ModelConfiguration(isStoredInMemoryOnly: false)
             modelContainer = try ModelContainer(for: schema, configurations: [config])
         } catch {
-            fatalError("Failed to create ModelContainer: \(error)")
+            print("[ModelContainer] Tier 1 failed: \(error). Deleting store and retrying.")
+            // Tier 2 — store is corrupt/incompatible, delete and recreate fresh
+            do {
+                let storeURL = config.url
+                let storePath = storeURL.path()
+                for suffix in ["", "-wal", "-shm"] {
+                    try? FileManager.default.removeItem(atPath: storePath + suffix)
+                }
+                modelContainer = try ModelContainer(for: schema, configurations: [config])
+                UserDefaults.standard.set(true, forKey: "storeWasReset")
+            } catch {
+                fatalError("Unrecoverable store failure: \(error)")
+            }
         }
     }
 

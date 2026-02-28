@@ -23,6 +23,7 @@ struct HomeView: View {
     @State private var copyFeedbackTask: Task<Void, Never>?
     @State private var showDevToggle = false
     @State private var selectedPersonaCard: Platform?
+    @State private var showStoreResetBanner = false
     @Query private var allCitations: [CitationReference]
 
     enum HomeTab: String, CaseIterable {
@@ -37,7 +38,10 @@ struct HomeView: View {
                     mainContentView(profile)
                 } else {
                     ProgressView("Loading...")
-                        .task { loadProfile() }
+                        .task {
+                            loadProfile()
+                            checkStoreReset()
+                        }
                 }
             }
             .navigationTitle(greeting)
@@ -159,6 +163,24 @@ struct HomeView: View {
 
     private func mainContentView(_ profile: UserContextProfile) -> some View {
         VStack(spacing: 0) {
+            // Store reset banner — shown once after data recovery
+            if showStoreResetBanner {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Your data was reset due to a storage upgrade. Please reimport your conversations.")
+                        .font(.caption)
+                }
+                .padding(12)
+                .background(.orange.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal)
+                .padding(.top, 8)
+                .onTapGesture {
+                    withAnimation { showStoreResetBanner = false }
+                }
+            }
+
             // Tab picker: Cards | Graph
             Picker("View", selection: $selectedTab) {
                 ForEach(HomeTab.allCases, id: \.self) { tab in
@@ -564,6 +586,13 @@ struct HomeView: View {
             // Decryption or other error — show empty but log
             print("[HomeView] Failed to load profile: \(error)")
             profile = UserContextProfile()
+        }
+    }
+
+    private func checkStoreReset() {
+        if UserDefaults.standard.bool(forKey: "storeWasReset") {
+            showStoreResetBanner = true
+            UserDefaults.standard.removeObject(forKey: "storeWasReset")
         }
     }
 
