@@ -188,7 +188,9 @@ struct Build21Tests {
         let context = try makeContext()
 
         // Add one entity below threshold — should NOT appear in card
-        makeEntity(text: "COBOL", entityType: .skill, score: 0.30, supportCount: 1, context: context)
+        // Mark as interacted so it uses the full 0.45 threshold
+        let cobol = makeEntity(text: "COBOL", entityType: .skill, score: 0.30, supportCount: 1, context: context)
+        cobol.hasBeenInteractedWith = true
 
         let facets = try makePopulatedFacets(context: context)
         let card = NarrationService.generateCard(for: .claude, facets: facets)
@@ -322,5 +324,58 @@ struct Build21Tests {
         let emptyFacets: [FacetType: [CanonicalEntity]] = [:]
         let card = NarrationService.generateCard(for: .manual, facets: emptyFacets)
         #expect(!card.isEmpty, "Manual card should return fallback, not empty string")
+    }
+
+    // MARK: - Test 14: New entity with low score visible via newEntityThreshold
+
+    @Test("New entity (hasBeenInteractedWith=false) with score 0.15 → visible")
+    @MainActor
+    func newEntityVisibleAtLowScore() throws {
+        let context = try makeContext()
+        let entity = makeEntity(text: "Rust", entityType: .skill, score: 0.15, supportCount: 1, context: context)
+        // hasBeenInteractedWith defaults to false
+        #expect(entity.hasBeenInteractedWith == false)
+        try context.save()
+
+        let all = try context.fetch(FetchDescriptor<CanonicalEntity>())
+        let visible = BeliefEngine.visibleEntities(from: all)
+
+        #expect(visible.count == 1, "New entity at 0.15 should be visible (threshold 0.1), got \(visible.count)")
+        #expect(visible.first?.canonicalText == "Rust")
+    }
+
+    // MARK: - Test 15: After interaction, entity uses full 0.45 threshold
+
+    @Test("After applyFeedback → hasBeenInteractedWith=true, uses 0.45 threshold")
+    @MainActor
+    func interactedEntityUsesFullThreshold() throws {
+        let context = try makeContext()
+        let entity = makeEntity(text: "Rust", entityType: .skill, score: 0.15, supportCount: 1, context: context)
+        try context.save()
+
+        // Before interaction: visible at 0.1 threshold
+        let allBefore = try context.fetch(FetchDescriptor<CanonicalEntity>())
+        let visibleBefore = BeliefEngine.visibleEntities(from: allBefore)
+        #expect(visibleBefore.count == 1, "Should be visible before interaction")
+
+        // Apply feedback — marks hasBeenInteractedWith = true
+        BeliefEngine.applyFeedback(signal: .copiedFact, to: entity)
+        #expect(entity.hasBeenInteractedWith == true, "Should be marked as interacted")
+
+        // After interaction: score is 0.15 + 0.15 (copiedFact delta) recalculated
+        // But the recalculated score from formula with supportCount=1 is very low
+        // The entity should now use the 0.45 threshold
+        let allAfter = try context.fetch(FetchDescriptor<CanonicalEntity>())
+        let visibleAfter = BeliefEngine.visibleEntities(from: allAfter)
+
+        // With supportCount=1 and recalculated score, it should be below 0.45
+        let finalScore = entity.beliefScore!.currentScore
+        if finalScore < BeliefEngine.visibilityThreshold {
+            #expect(!visibleAfter.contains { $0.canonicalText == "Rust" },
+                    "Interacted entity with score \(finalScore) < 0.45 should be hidden")
+        } else {
+            #expect(visibleAfter.contains { $0.canonicalText == "Rust" },
+                    "Interacted entity with score \(finalScore) >= 0.45 should be visible")
+        }
     }
 }

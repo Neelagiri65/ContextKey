@@ -55,87 +55,69 @@ private final class Counter: @unchecked Sendable {
 @Suite("V2SLMCaller Tests")
 struct V2SLMCallerTests {
 
-    // MARK: - Test 1: Invalid JSON triggers retry
+    // MARK: - Test 1: Plain text response parses into unclassified candidates
 
-    @Test("Invalid JSON response triggers retry logic")
-    func invalidJSONTriggersRetry() async throws {
-        // Temporarily enable the feature flag for testing
-        // We test the parsing logic by providing a mock session
-        // Since FeatureFlags.v2EnhancedExtraction is false, call() will throw modelUnavailable.
-        // So we test the parsing/retry path directly via the internal flow.
-        //
-        // To properly test, we verify that when first response is garbage
-        // and retry response is valid JSON, we get correct results.
-
-        let invalidJSON = "This is not JSON at all, just random text about skills."
-        let validJSON = """
-        [{"text": "Uses Swift for iOS development", "entityType": "skill", "speakerAttribution": "userExplicit", "confidence": 0.9}]
+    @Test("Plain text response parses into unclassified candidates")
+    func plainTextParsesIntoCandidates() {
+        let response = """
+        I am an iOS developer
+        I use Swift and SwiftUI daily
+        Building an app called ContextKey
         """
 
-        let mock = MockLanguageModelSession(responses: [invalidJSON, validJSON])
+        let mock = MockLanguageModelSession(response: response)
         let caller = V2SLMCaller(session: mock)
+        let candidates = caller.parsePlainTextLines(response)
 
-        // Call the internal flow directly — bypass feature flag by calling
-        // the underlying method. Since call() is feature-gated, we test
-        // by temporarily enabling the flag isn't possible (it's a static let).
-        // Instead, we verify the retry behavior through the mock call count.
-        //
-        // We need to use a workaround: test the JSON parsing functions
-        // by constructing a caller and checking behavior.
-        // The cleanest approach: verify the mock was called twice (retry happened).
+        #expect(candidates.count == 3)
+        #expect(candidates[0].text == "I am an iOS developer")
+        #expect(candidates[1].text == "I use Swift and SwiftUI daily")
+        #expect(candidates[2].text == "Building an app called ContextKey")
 
-        // Since we can't call call() with flag off, let's test the parsing path:
-        // Simulate what call() does internally.
-        let firstResponse = try await mock.respond(to: "first prompt")
-        #expect(firstResponse == invalidJSON)
-
-        // First response is not valid JSON — parseJSON would return nil
-        // So caller would retry with simplified prompt
-        let retryResponse = try await mock.respond(to: "retry prompt")
-        #expect(retryResponse == validJSON)
-
-        // Verify mock was called twice (retry happened)
-        #expect(mock.callCount == 2)
-
-        // Verify the valid JSON can be parsed into candidates
-        // We extract the JSON array parsing logic result
-        let data = validJSON.data(using: .utf8)!
-        struct CandidateJSON: Decodable {
-            var text: String
-            var entityType: String
-            var speakerAttribution: String?
-            var confidence: Double?
+        // All candidates should be unclassified
+        for candidate in candidates {
+            #expect(candidate.entityType == nil, "Candidates should have nil entityType")
+            #expect(candidate.speakerAttribution == .userExplicit)
+            #expect(candidate.confidence == 0.5)
         }
-        let items = try JSONDecoder().decode([CandidateJSON].self, from: data)
-        #expect(items.count == 1)
-        #expect(items[0].text == "Uses Swift for iOS development")
-        #expect(items[0].entityType == "skill")
     }
 
-    // MARK: - Test 2: Empty array response returns empty without throwing
+    // MARK: - Test 2: Empty response returns no candidates
 
-    @Test("Empty array response returns empty array without error")
-    func emptyArrayReturnsEmpty() async throws {
-        let emptyArrayJSON = "[]"
-        let mock = MockLanguageModelSession(response: emptyArrayJSON)
+    @Test("Empty or garbage response returns no candidates")
+    func emptyResponseReturnsNoCandidates() {
+        let mock = MockLanguageModelSession(response: "")
         let caller = V2SLMCaller(session: mock)
+        let candidates = caller.parsePlainTextLines("")
 
-        // Parse the empty array response directly
-        let response = try await mock.respond(to: "any prompt")
-        #expect(response == "[]")
+        #expect(candidates.isEmpty)
 
-        // Verify empty JSON array parses without error
-        let data = response.data(using: .utf8)!
-        struct CandidateJSON: Decodable {
-            var text: String
-            var entityType: String
-            var speakerAttribution: String?
-            var confidence: Double?
-        }
-        let items = try JSONDecoder().decode([CandidateJSON].self, from: data)
-        #expect(items.isEmpty)
+        // Also test whitespace-only
+        let whitespace = caller.parsePlainTextLines("   \n  \n\n  ")
+        #expect(whitespace.isEmpty)
 
-        // Verify mock was only called once (no retry needed for valid empty response)
-        #expect(mock.callCount == 1)
+        // Also test short junk (< 5 chars)
+        let short = caller.parsePlainTextLines("OK\nHi\nYes")
+        #expect(short.isEmpty)
+    }
+
+    // MARK: - Test 3: parsePlainTextLines strips list prefixes
+
+    @Test("parsePlainTextLines strips bullet and number prefixes")
+    func stripsListPrefixes() {
+        let response = """
+        - I am an iOS developer
+        • I use Swift daily
+        1. Building ContextKey app
+        """
+
+        let mock = MockLanguageModelSession(response: response)
+        let caller = V2SLMCaller(session: mock)
+        let candidates = caller.parsePlainTextLines(response)
+
+        #expect(candidates.count == 3)
+        #expect(candidates[0].text == "I am an iOS developer")
+        #expect(candidates[1].text == "I use Swift daily")
+        #expect(candidates[2].text == "Building ContextKey app")
     }
 }

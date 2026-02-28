@@ -34,7 +34,9 @@ enum ConversationPreProcessor {
         let platform = detectPlatform(rawText)
         let taggedText = tagSpeakers(rawText, platform: platform)
         let primingTopics = extractPrimingTopics(rawText)
-        let chunks = createOverlappingChunks(taggedText, chunkSize: chunkSize, overlapSize: overlapSize)
+        let userOnly = extractUserSegments(taggedText)
+        let textToChunk = userOnly.isEmpty ? taggedText : userOnly
+        let chunks = createOverlappingChunks(textToChunk, chunkSize: chunkSize, overlapSize: overlapSize)
         let estimatedDate = extractDate(rawText)
 
         return PreProcessedConversation(
@@ -265,5 +267,32 @@ enum ConversationPreProcessor {
 
         // Return the first detected date
         return results.first?.date
+    }
+
+    // MARK: - User Segment Extraction
+
+    /// Extracts only [USER] turn content from speaker-tagged text.
+    /// Strips all [ASSISTANT] content and [USER] tag prefixes.
+    /// Returns a single string of joined user-only lines.
+    static func extractUserSegments(_ taggedText: String) -> String {
+        let lines = taggedText.components(separatedBy: "\n")
+        var userLines: [String] = []
+        var inUserTurn = false
+
+        for line in lines {
+            if line == "[USER]" {
+                inUserTurn = true
+                continue
+            }
+            if line == "[ASSISTANT]" {
+                inUserTurn = false
+                continue
+            }
+            if inUserTurn {
+                userLines.append(line)
+            }
+        }
+
+        return userLines.joined(separator: "\n")
     }
 }

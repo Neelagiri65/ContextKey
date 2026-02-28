@@ -102,4 +102,52 @@ struct ConversationPreProcessorTests {
             #expect(topic.count >= 2, "Each topic should be at least 2 characters")
         }
     }
+
+    // MARK: - Test 4: extractUserSegments strips assistant content
+
+    @Test("extractUserSegments returns only user content from multi-turn tagged text")
+    func extractUserSegmentsMultiTurn() {
+        let taggedText = """
+        [USER]
+        I'm building an iOS app called ContextKey
+        [ASSISTANT]
+        That sounds interesting! Tell me more about it.
+        [USER]
+        It uses SwiftUI and SwiftData for persistence
+        [ASSISTANT]
+        Great choices for a modern iOS app.
+        """
+
+        let result = ConversationPreProcessor.extractUserSegments(taggedText)
+
+        // Should contain user content
+        #expect(result.contains("I'm building an iOS app called ContextKey"))
+        #expect(result.contains("It uses SwiftUI and SwiftData for persistence"))
+
+        // Should NOT contain assistant content
+        #expect(!result.contains("That sounds interesting"))
+        #expect(!result.contains("Great choices"))
+
+        // Should NOT contain tag markers
+        #expect(!result.contains("[USER]"))
+        #expect(!result.contains("[ASSISTANT]"))
+    }
+
+    // MARK: - Test 5: extractUserSegments fallback on untagged input
+
+    @Test("extractUserSegments with no tags returns empty — process() falls back to full text")
+    func extractUserSegmentsFallback() {
+        let untaggedText = "Just some plain text with no speaker tags at all."
+
+        let userOnly = ConversationPreProcessor.extractUserSegments(untaggedText)
+
+        // No [USER] tags → returns empty string
+        #expect(userOnly.isEmpty, "Should return empty when no [USER] tags found")
+
+        // process() fallback: textToChunk = userOnly.isEmpty ? taggedText : userOnly
+        // Verify process() still produces chunks from this input
+        let result = ConversationPreProcessor.process(untaggedText)
+        #expect(!result.chunks.isEmpty, "process() should fall back to full text and produce chunks")
+        #expect(result.chunks.first?.contains("plain text") == true, "Fallback chunks should contain original content")
+    }
 }

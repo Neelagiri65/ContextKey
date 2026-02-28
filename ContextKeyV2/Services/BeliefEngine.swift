@@ -98,6 +98,7 @@ enum BeliefEngine {
     ) {
         guard let score = entity.beliefScore else { return }
         score.userFeedbackDelta += signal.delta
+        entity.hasBeenInteractedWith = true
         // Activate stability floor if support count >= 3
         if score.supportCount >= 3 {
             score.stabilityFloorActive = true
@@ -151,11 +152,18 @@ enum BeliefEngine {
 
     // MARK: - 4.4 Visibility Filter
 
+    /// Threshold for new entities that haven't been interacted with yet.
+    /// Lower than visibilityThreshold to allow user review before hiding.
+    static let newEntityThreshold = 0.1
+
     /// Returns only entities with belief score at or above the visibility threshold.
+    /// New entities (never interacted with) use a lower threshold to allow user review.
+    /// Interacted entities use the full 0.45 threshold.
     static func visibleEntities(from entities: [CanonicalEntity]) -> [CanonicalEntity] {
         entities.filter { entity in
             guard let score = entity.beliefScore else { return false }
-            return score.currentScore >= visibilityThreshold
+            let threshold = entity.hasBeenInteractedWith ? visibilityThreshold : newEntityThreshold
+            return score.currentScore >= threshold
         }
     }
 

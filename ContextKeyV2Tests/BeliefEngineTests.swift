@@ -349,13 +349,15 @@ struct BeliefEngineTests {
         scoreLow.currentScore = 0.48
 
         // Also one below threshold — should be filtered out
-        let (_, scoreHidden) = makeEntity(
+        // Mark as interacted so it uses the full 0.45 threshold (not the 0.1 new-entity threshold)
+        let (fortranEntity, scoreHidden) = makeEntity(
             text: "Fortran",
             supportCount: 1,
             daysSinceLastSeen: 365,
             context: context
         )
         scoreHidden.currentScore = 0.20
+        fortranEntity.hasBeenInteractedWith = true
 
         try context.save()
 

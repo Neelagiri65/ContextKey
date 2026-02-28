@@ -43,13 +43,13 @@ struct V2PostProcessorTests {
     func deduplicationKeepsHigherConfidence() {
         let candidate1 = RawExtractionCandidate(
             text: "Uses SwiftUI for iOS app development",
-            entityType: .skill,
+            entityType: nil,
             speakerAttribution: .userExplicit,
             confidence: 0.7
         )
         let candidate2 = RawExtractionCandidate(
             text: "Uses SwiftUI for iOS application development",
-            entityType: .skill,
+            entityType: nil,
             speakerAttribution: .userExplicit,
             confidence: 0.9
         )

@@ -52,10 +52,14 @@ func halfLifeDays(for entityType: EntityType) -> Double {
     }
 }
 
+/// Current migration version. Bump this when migration logic changes
+/// to force re-migration on next app launch.
+let v2MigrationVersion = 2
+
 /// Migrates all existing ContextFact records from the v1 encrypted storage
 /// into the v2 SwiftData models: RawExtraction, CanonicalEntity, BeliefScore.
 ///
-/// - Guarded by UserDefaults flag `hasRunV2Migration`. Runs exactly once.
+/// - Guarded by UserDefaults `v2MigrationVersion`. Re-runs if stored version < current.
 /// - Forward-only: does not delete or overwrite any existing data.
 /// - Does NOT wire to app launch. Must be called explicitly when ready.
 ///
@@ -63,7 +67,8 @@ func halfLifeDays(for entityType: EntityType) -> Double {
 ///   - existingFacts: The array of ContextFact from the loaded UserContextProfile
 ///   - modelContext: The SwiftData ModelContext to insert new records into
 func runV2Migration(existingFacts: [ContextFact], modelContext: ModelContext) throws {
-    guard !UserDefaults.standard.bool(forKey: "hasRunV2Migration") else {
+    let storedVersion = UserDefaults.standard.integer(forKey: "v2MigrationVersion")
+    guard storedVersion < v2MigrationVersion else {
         return
     }
 
@@ -86,17 +91,19 @@ func runV2Migration(existingFacts: [ContextFact], modelContext: ModelContext) th
             isActive: true
         )
 
-        // 2. Create BeliefScore
+        // 2. Create BeliefScore with provisional boost so migrated entities
+        //    score high enough to be visible immediately
+        let supportCount = max(fact.frequency, 3)
         let beliefScore = BeliefScore(
             canonicalEntityId: UUID(),
-            currentScore: 0.5,
-            supportCount: max(fact.frequency, 1),
+            currentScore: 0.5,  // placeholder — recalculated below
+            supportCount: supportCount,
             lastCalculated: Date(),
             lastCorroboratedDate: fact.lastSeenDate,
             attributionWeight: 1.0,
-            userFeedbackDelta: 0.0,
+            userFeedbackDelta: 0.3,
             halfLifeDays: halfLifeDays(for: entityType),
-            stabilityFloorActive: fact.frequency >= 3
+            stabilityFloorActive: supportCount >= 3
         )
 
         // 3. Create CanonicalEntity
@@ -118,7 +125,12 @@ func runV2Migration(existingFacts: [ContextFact], modelContext: ModelContext) th
         // 5. Fix BeliefScore.canonicalEntityId to match actual entity
         beliefScore.canonicalEntityId = canonicalEntity.id
 
-        // 6. Insert into SwiftData context
+        // 6. Recalculate actual score from formula instead of hardcoded 0.5
+        beliefScore.currentScore = BeliefEngine.calculateBeliefScore(
+            for: canonicalEntity, score: beliefScore
+        )
+
+        // 7. Insert into SwiftData context
         modelContext.insert(rawExtraction)
         modelContext.insert(beliefScore)
         modelContext.insert(canonicalEntity)
@@ -126,5 +138,5 @@ func runV2Migration(existingFacts: [ContextFact], modelContext: ModelContext) th
 
     try modelContext.save()
 
-    UserDefaults.standard.set(true, forKey: "hasRunV2Migration")
+    UserDefaults.standard.set(v2MigrationVersion, forKey: "v2MigrationVersion")
 }

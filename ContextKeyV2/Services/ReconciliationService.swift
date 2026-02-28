@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 import SwiftData
 
 // MARK: - Reconciliation Service (Build 18 — Section 3)
@@ -19,6 +20,13 @@ enum ReconciliationService {
     /// Runs in order: citations first, then entity reconciliation, then pending alias promotion.
     @MainActor
     static func reconcile(extractions: [RawExtraction], modelContext: ModelContext) async throws {
+        // Classify entity types using NLTagger before reconciliation.
+        // Extractions arrive with default .preference from the simplified SLM prompt.
+        for extraction in extractions {
+            if extraction.entityType == .preference {
+                extraction.entityType = classifyEntityType(extraction.text)
+            }
+        }
         try await reconcileCitations(from: extractions, modelContext: modelContext)
         try await reconcileEntities(extractions: extractions, modelContext: modelContext)
         try await processPendingAliasCandidates(modelContext: modelContext)
@@ -376,6 +384,69 @@ enum ReconciliationService {
 
         // Cap externalCorroboration at 0.3 total
         score.externalCorroboration = min(score.externalCorroboration + boost, 0.3)
+    }
+
+    // MARK: - Entity Type Classification (NLTagger-based)
+
+    /// Classifies an untyped fact text into an EntityType using NLTagger
+    /// and pattern matching. Called on RawExtractions that arrive with
+    /// the default .preference type from the simplified SLM prompt.
+    static func classifyEntityType(_ text: String) -> EntityType {
+        let tagger = NLTagger(tagSchemes: [.nameType])
+        tagger.string = text
+
+        var detectedTag: NLTag?
+        tagger.enumerateTags(
+            in: text.startIndex..<text.endIndex,
+            unit: .word,
+            scheme: .nameType,
+            options: [.omitPunctuation, .omitWhitespace, .joinNames]
+        ) { tag, _ in
+            if let tag = tag {
+                detectedTag = tag
+                return false  // stop at first match
+            }
+            return true
+        }
+
+        // NLTagger-based classification
+        if let tag = detectedTag {
+            switch tag {
+            case .personalName:     return .identity
+            case .organizationName: return .company
+            case .placeName:        return .context
+            default: break
+            }
+        }
+
+        // Pattern-based fallback
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+
+        // Contains digit → .skill (e.g. "5 years of Swift", "iOS 17")
+        if trimmed.contains(where: { $0.isNumber }) {
+            return .skill
+        }
+
+        // All uppercase, length >= 2 → .domain (e.g. "AI", "ML", "SaaS")
+        let letters = trimmed.filter { $0.isLetter }
+        if letters.count >= 2 && letters == letters.uppercased() {
+            return .domain
+        }
+
+        // Role suffixes → .identity
+        let roleSuffixes = [
+            "er", "or", "ist", "ant", "ent",
+            "manager", "director", "head", "chief",
+            "lead", "founder", "officer"
+        ]
+        let lastWord = lower.components(separatedBy: .whitespaces).last ?? ""
+        if roleSuffixes.contains(where: { lastWord.hasSuffix($0) }) {
+            return .identity
+        }
+
+        // Default → .preference (365-day half-life, NOT .context's 14-day)
+        return .preference
     }
 
     // MARK: - Private Helpers

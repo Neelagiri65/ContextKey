@@ -59,7 +59,7 @@ enum V2PostProcessor {
         return deduplicated.map { item in
             RawExtraction(
                 text: item.candidate.text,
-                entityType: item.candidate.entityType,
+                entityType: item.candidate.entityType ?? .preference,
                 sourceConversationId: sourceConversationId,
                 sourceChunkId: item.chunkId,
                 extractionTimestamp: Date(),

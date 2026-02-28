@@ -107,6 +107,7 @@ final class CanonicalEntity {
     var citationIds: [UUID]
     var pendingAliasCandidates: [PendingAliasCandidate]
     var hasMergeConflict: Bool
+    var hasBeenInteractedWith: Bool
 
     init(
         id: UUID = UUID(),
@@ -121,7 +122,8 @@ final class CanonicalEntity {
         beliefScore: BeliefScore? = nil,
         citationIds: [UUID] = [],
         pendingAliasCandidates: [PendingAliasCandidate] = [],
-        hasMergeConflict: Bool = false
+        hasMergeConflict: Bool = false,
+        hasBeenInteractedWith: Bool = false
     ) {
         self.id = id
         self.canonicalText = canonicalText
@@ -136,6 +138,7 @@ final class CanonicalEntity {
         self.citationIds = citationIds
         self.pendingAliasCandidates = pendingAliasCandidates
         self.hasMergeConflict = hasMergeConflict
+        self.hasBeenInteractedWith = hasBeenInteractedWith
     }
 }
 

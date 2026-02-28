@@ -276,7 +276,11 @@ enum NarrationService {
     ) -> [String] {
         guard let entities = facets[facet] else { return [] }
         return entities
-            .filter { ($0.beliefScore?.currentScore ?? 0) >= BeliefEngine.visibilityThreshold }
+            .filter { entity in
+                let score = entity.beliefScore?.currentScore ?? 0
+                let threshold = entity.hasBeenInteractedWith ? BeliefEngine.visibilityThreshold : BeliefEngine.newEntityThreshold
+                return score >= threshold
+            }
             .prefix(limit)
             .map(\.canonicalText)
     }

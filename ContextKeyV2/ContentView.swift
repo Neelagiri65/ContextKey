@@ -38,7 +38,7 @@ struct ContentView: View {
     }
 
     private func runMigrationIfNeeded() async {
-        guard !UserDefaults.standard.bool(forKey: "hasRunV2Migration") else { return }
+        guard UserDefaults.standard.integer(forKey: "v2MigrationVersion") < v2MigrationVersion else { return }
         guard storageService.hasStoredProfile else { return }
 
         isMigrating = true
