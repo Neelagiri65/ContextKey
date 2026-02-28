@@ -22,6 +22,8 @@ struct HomeView: View {
     @State private var copiedFactFeedback: String?
     @State private var copyFeedbackTask: Task<Void, Never>?
     @State private var showDevToggle = false
+    @State private var selectedPersonaCard: Platform?
+    @Query private var allCitations: [CitationReference]
 
     enum HomeTab: String, CaseIterable {
         case cards = "Cards"
@@ -108,6 +110,12 @@ struct HomeView: View {
             .sheet(isPresented: $showNoteBuilder) {
                 NoteBuilderView(noteBuilder: noteBuilder)
             }
+            .sheet(item: $selectedPersonaCard) { platform in
+                PersonaCardDetailView(
+                    platform: platform,
+                    cardText: generateCardForPlatform(platform)
+                )
+            }
             .alert("Delete All Data?", isPresented: $showDeleteConfirm) {
                 Button("Delete", role: .destructive) {
                     do {
@@ -182,6 +190,12 @@ struct HomeView: View {
                 // Pillar cards — full-width list
                 pillarCardsSection(profile)
 
+                // Persona cards — 2x2 grid (tap=edit, long press=copy)
+                personaCardsGrid
+
+                // AI App quick-launch bar
+                aiAppBar
+
                 // V2 Facets — grouped by facet, sorted by belief score
                 facetCardsSection
 
@@ -189,9 +203,6 @@ struct HomeView: View {
                 if !emptyFacetsList.isEmpty {
                     emptyFacetsPromptSection
                 }
-
-                // AI App quick-launch
-                aiAppBar
 
                 // Add context prompt if sparse
                 if profile.facts.count < 5 {
@@ -285,12 +296,12 @@ struct HomeView: View {
 
     private var aiAppBar: some View {
         VStack(spacing: 8) {
-            Text(copiedToClipboard ? "Copied! Switch to your AI app and paste." : "Copy context for AI app")
+            Text(copiedToClipboard ? "Copied! Paste into your AI app." : "Tap to copy & open")
                 .font(.caption)
                 .foregroundStyle(copiedToClipboard ? .blue : .secondary)
                 .animation(.smooth, value: copiedToClipboard)
 
-            HStack(spacing: 20) {
+            HStack(spacing: 16) {
                 ForEach(Platform.aiPlatforms, id: \.self) { platform in
                     Button {
                         launchAIApp(platform)
@@ -449,6 +460,72 @@ struct HomeView: View {
         .padding(.horizontal)
     }
 
+    // MARK: - Persona Cards Grid (2x2)
+
+    private var personaCardsGrid: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                personaCard(for: .claude)
+                personaCard(for: .chatgpt)
+            }
+            HStack(spacing: 10) {
+                personaCard(for: .perplexity)
+                personaCard(for: .gemini)
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    private func personaCard(for platform: Platform) -> some View {
+        let cardText = generateCardForPlatform(platform)
+        let isEmpty = cardText == "Import more conversations to generate your context card."
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: platform.iconName)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(platformColor(platform))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Text(platform.displayName)
+                    .font(.caption.bold())
+
+                Spacer()
+            }
+
+            Text(isEmpty ? "Import conversations to build this card." : cardText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(platformColor(platform).opacity(0.2), lineWidth: 1)
+        )
+        .onTapGesture {
+            selectedPersonaCard = platform
+        }
+        .onLongPressGesture {
+            // Long press = silent copy + haptic, no app launch
+            UIPasteboard.general.string = cardText
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+            BeliefEngine.applyContextCardCopiedToAll(modelContext: modelContext)
+            copiedToClipboard = true
+            scheduleCopyFeedbackReset()
+        }
+    }
+
     private func iconForFacet(_ facet: FacetType) -> String {
         switch facet {
         case .professionalIdentity: return "person.fill"
@@ -498,19 +575,20 @@ struct HomeView: View {
         scheduleCopyFeedbackReset()
     }
 
+    private func generateCardForPlatform(_ platform: Platform) -> String {
+        let facets = FacetService.visibleFacets(from: allEntities)
+        return NarrationService.generateCard(
+            for: platform,
+            facets: facets,
+            citations: allCitations
+        )
+    }
+
     private func launchAIApp(_ platform: Platform) {
-        guard let profile, !profile.facts.isEmpty else { return }
-        UIPasteboard.general.string = profile.formattedContext()
+        let cardText = generateCardForPlatform(platform)
         BeliefEngine.applyContextCardCopiedToAll(modelContext: modelContext)
+        AILaunchService.launch(platform: platform, cardText: cardText)
         copiedToClipboard = true
-
-        // Open the AI app if URL scheme is supported
-        if let scheme = platform.urlScheme, let url = URL(string: scheme) {
-            if UIApplication.shared.canOpenURL(url) {
-                UIApplication.shared.open(url)
-            }
-        }
-
         scheduleCopyFeedbackReset()
     }
 
@@ -640,6 +718,41 @@ struct PillarCardView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(facts.isEmpty ? Color(.systemGray5) : color.opacity(0.2), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Persona Card Detail View
+
+struct PersonaCardDetailView: View {
+    let platform: Platform
+    let cardText: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(cardText)
+                    .font(.body)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("\(platform.displayName) Card")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        UIPasteboard.general.string = cardText
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                        generator.impactOccurred()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -35,12 +35,14 @@ enum ContentType: String, Codable {
     case toolUse
 }
 
-enum Platform: String, Codable, CaseIterable {
+enum Platform: String, Codable, CaseIterable, Identifiable {
     case claude
     case chatgpt
     case perplexity
     case gemini
     case manual
+
+    var id: String { rawValue }
 
     /// Display name for UI
     var displayName: String {
